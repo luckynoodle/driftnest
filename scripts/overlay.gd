@@ -1,11 +1,14 @@
 class_name WorldOverlay
 extends Node2D
-## World-space UI drawn above everything: station names, chore progress ring,
-## starmail arrow and floating reward text.
+## World-space UI drawn over everything: town border, placement grid, worker badges,
+## the Keeper's action ring and floating reward text.
+
+const T := WorldMap.TILE
 
 var main = null
 var floaters: Array = []
 var font: Font
+var t := 0.0
 
 
 func _ready() -> void:
@@ -13,13 +16,16 @@ func _ready() -> void:
 
 
 func float_text(text: String, pos: Vector2, col: Color, delay: float = 0.0) -> void:
+	if floaters.size() > 40:
+		return
 	floaters.append({"text": text, "pos": pos, "col": col, "age": -delay})
 
 
 func _process(delta: float) -> void:
+	t += delta
 	for f in floaters:
 		f["age"] = float(f["age"]) + delta
-	floaters = floaters.filter(func(f): return float(f["age"]) < 1.6)
+	floaters = floaters.filter(func(f): return float(f["age"]) < 1.5)
 	queue_redraw()
 
 
@@ -33,47 +39,68 @@ func _text(pos: Vector2, text: String, size: int, col: Color, outline: Color = C
 func _draw() -> void:
 	if main == null:
 		return
-	# station names
-	for st in main.stations:
-		if str(st["label"]) != "":
-			_text(st["pos"] + Vector2(0, float(st["label_y"])), str(st["label"]), 22, Color.WHITE)
+	var placing: bool = main.placing != ""
+	_draw_border(placing)
+	if placing:
+		_draw_grid()
+	_draw_badges()
 
-	var player: Node2D = main.player
-	var head := player.position + Vector2(0, -122)
+	# keeper action ring
+	var act: Dictionary = main.action
+	if not act.is_empty() and bool(main.action_hold) and str(act["kind"]) != "open":
+		var head: Vector2 = main.keeper.position + Vector2(0, -96)
+		var ratio := 1.0 - clampf(float(main.action_cd) / float(main.action_cd_max), 0.0, 1.0)
+		draw_circle(head, 20.0, Color(1, 1, 1, 0.9))
+		draw_arc(head, 16.0, -PI / 2.0, -PI / 2.0 + TAU * ratio, 32, Color("#ff8a65"), 6.0, true)
 
-	# progress ring for the chore the player is standing in
-	if int(main.active) >= 0:
-		var st: Dictionary = main.stations[int(main.active)]
-		var kind := str(st["kind"])
-		if kind != "kiosk":
-			var need: float = main.station_time(st)
-			var ratio := clampf(float(main.progress) / need, 0.0, 1.0)
-			draw_circle(head, 27.0, Color(1, 1, 1, 0.9))
-			draw_arc(head, 22.0, 0.0, TAU, 40, Color("#eadccb"), 7.0, true)
-			if ratio > 0.0:
-				draw_arc(head, 22.0, -PI / 2.0, -PI / 2.0 + TAU * ratio, 40, Color("#ff8a65"), 7.0, true)
-			_text(head + Vector2(0, -38), main.station_verb(st), 20, Color.WHITE)
-			var job_id: String = main.station_job_for_wish(st)
-			if job_id != "" and Game.companion_wish() == job_id:
-				_text(head + Vector2(0, -62), "Wish bonus!", 18, Color("#ffd1e0"), Color("#c2416e"))
-
-	# arrow toward the mailbox when carrying starmail
-	if int(main.mail_target) >= 0:
-		var target: Vector2 = main.mailbox_pos(int(main.mail_target))
-		var to := target - player.position
-		if to.length() > 160.0:
-			var dir := to.normalized()
-			var c := player.position + Vector2(0, -40) + dir * 80.0
-			var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() / 150.0)
-			var pts := PackedVector2Array([c + dir * 22.0 * pulse, c + dir.orthogonal() * 14.0 - dir * 8.0, c - dir.orthogonal() * 14.0 - dir * 8.0])
-			draw_colored_polygon(pts, Color("#ffd23f"))
-			draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[0]]), Color("#7a5a1c"), 3.0, true)
-
-	# floating rewards
 	for f in floaters:
 		var age: float = f["age"]
 		if age < 0.0:
 			continue
-		var a := clampf(1.6 - age, 0.0, 1.0)
+		var a := clampf(1.5 - age, 0.0, 1.0)
 		var col: Color = f["col"]
-		_text(f["pos"] + Vector2(0, -60.0 * age), str(f["text"]), 24, Color(col, a), Color(0.2, 0.15, 0.12, a))
+		_text(f["pos"] + Vector2(0, -50.0 * age), str(f["text"]), 22, Color(col, a), Color(0.2, 0.15, 0.12, a), 5)
+
+
+func _draw_border(strong: bool) -> void:
+	var c := WorldMap.CENTER * T
+	var r := Game.town_radius() * T
+	var n := 96
+	var col := Color(1, 1, 1, 0.75 if strong else 0.4)
+	for i in n:
+		if i % 2 == 1:
+			continue
+		var a0 := TAU * i / n + t * 0.01
+		var a1 := TAU * (i + 1) / n + t * 0.01
+		draw_arc(c, r, a0, a1, 4, col, 5.0 if strong else 3.0, true)
+
+
+func _draw_grid() -> void:
+	var g: Vector2i = main.ghost_cell
+	var col := Color(1, 1, 1, 0.22)
+	for y in range(g.y - 8, g.y + 10):
+		for x in range(g.x - 8, g.x + 10):
+			var c := Vector2i(x, y)
+			if (Vector2(c) + Vector2(0.5, 0.5)).distance_to(WorldMap.CENTER) > Game.town_radius():
+				continue
+			draw_rect(Rect2(Vector2(c) * T, Vector2(T, T)), col, false, 1.0)
+
+
+func _draw_badges() -> void:
+	for b in Game.buildings:
+		var info: Dictionary = Data.BUILDINGS[b["type"]]
+		if not bool(b["built"]) or not info.has("job"):
+			continue
+		var size: Vector2i = info["size"]
+		var top := WorldMap.cell_to_world(b["cell"]) + Vector2(size.x * T / 2.0, -10.0)
+		if b["type"] == "builder_hut":
+			top.y -= 40.0
+		var n := Game.workers_at(int(b["id"])).size()
+		var slots := int(info["slots"])
+		var w := 74.0
+		var rect := Rect2(top - Vector2(w / 2.0, 16), Vector2(w, 30))
+		var bg := Color(1, 1, 1, 0.9) if n > 0 else Color(1.0, 0.85, 0.8, 0.95)
+		draw_rect(rect, bg)
+		draw_rect(rect, Color("#4a3a32", 0.5), false, 2.0)
+		PetArt.draw_tool(self, top + Vector2(-20, -1), Data.JOBS[info["job"]]["tool"], 0, 9.0)
+		draw_string(font, top + Vector2(-6, 8), "%d/%d" % [n, slots], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("#4a3a32"))

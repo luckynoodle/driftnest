@@ -1,7 +1,7 @@
 extends Node
-## Automated play-through. Run with:
+## Automated play-through of the town loop. Run with:
 ##   godot --path . -- --smoke            (add --headless to skip rendering)
-## Exits with code 0 on success, 1 on failure. Saves screenshots to user://shots when rendering.
+## Exits 0 on success, 1 on failure. Saves screenshots to user://shots when rendering.
 
 var main = null
 var failures: Array = []
@@ -13,10 +13,8 @@ func _ready() -> void:
 
 
 func _check(cond: bool, msg: String) -> void:
-	if cond:
-		print("  ok   ", msg)
-	else:
-		print("  FAIL ", msg)
+	print("  ok   " if cond else "  FAIL ", msg)
+	if not cond:
 		failures.append(msg)
 
 
@@ -27,15 +25,56 @@ func _wait(sec: float) -> void:
 func _shot(name: String) -> void:
 	if DisplayServer.get_name() == "headless":
 		return
+	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	if img:
 		img.save_png(shot_dir.path_join(name + ".png"))
 
 
-func _goto(id: String) -> void:
-	main.player.position = main.station_by_id(id)["pos"]
-	main.pet.position = main.player.position + Vector2(-60, 0)
+func _close_all() -> void:
+	for i in 10:
+		if not main.hud.is_modal_open():
+			return
+		main.hud.close_modal()
+		await _wait(0.05)
+
+
+func _find_spot(type: String) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	var r := int(Game.town_radius()) + 1
+	for y in range(40 - r, 41 + r):
+		for x in range(40 - r, 41 + r):
+			var c := Vector2i(x, y)
+			if Game.can_place(type, c, false) == "":
+				var d := (Vector2(c) - WorldMap.CENTER).length()
+				if d < best_d:
+					best_d = d
+					best = c
+	return best
+
+
+func _place(type: String) -> Dictionary:
+	var c := _find_spot(type)
+	_check(c.x >= 0, "found a spot for %s" % type)
+	if c.x < 0:
+		return {}
+	var b := Game.place_building(type, c)
+	_check(not b.is_empty(), "placed %s" % type)
+	return b
+
+
+func _wait_built(b: Dictionary, timeout: float) -> void:
+	var waited := 0.0
+	while not bool(b["built"]) and waited < timeout:
+		await _wait(0.25)
+		waited += 0.25
+
+
+func _goto_building(b: Dictionary, offset: Vector2 = Vector2(0, 90)) -> void:
+	var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+	main.keeper.position = WorldMap.cell_to_world(b["cell"]) + Vector2(size.x * 32.0, size.y * 64.0) + offset
 
 
 func _run() -> void:
@@ -43,119 +82,218 @@ func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(shot_dir)
 	print("Smoke test starting")
 	Game.reset_save()
+	main._sync()
 	await _wait(0.3)
 	main.hud.open_help()
-	await _wait(0.3)
-	await _shot("01_help")
-	_check(main.hud.is_modal_open(), "help window opens")
-	main.hud.close_modal()
 	await _wait(0.2)
+	await _shot("01_help")
+	_check(main.hud.is_modal_open(), "help opens")
+	await _close_all()
 	await _shot("02_start")
 
-	# --- hatch the Dawn egg by napping in the nest
-	_check(not Game.get_carried_egg().is_empty(), "starts carrying an egg")
-	Engine.time_scale = 6.0
-	_goto("nest")
+	# --- hatch the Dawn egg
+	_check(not Game.carried_egg().is_empty(), "starts carrying an egg")
+	_check(Game.eggs_at("nest").size() == 1, "second egg warming in the nest")
+	Engine.time_scale = 8.0
 	var waited := 0.0
-	while Game.pets.is_empty() and waited < 40.0:
-		await _wait(0.5)
-		waited += 0.5
+	while Game.pets.is_empty() and waited < 10.0:
+		await _wait(0.25)
+		waited += 0.25
 	Engine.time_scale = 1.0
-	_check(Game.pets.size() == 1, "dawn egg hatched after naps")
-	_check(Game.companion != -1, "hatchling became companion")
-	await _wait(0.4)
+	_check(Game.pets.size() == 1, "dawn egg hatched")
+	await _wait(0.2)
 	await _shot("03_hatch")
 	_check(main.hud.is_modal_open(), "hatch reveal shown")
-	main.hud.close_modal()
+	await _close_all()
+	var p1: Dictionary = Game.pets[0]
 
-	# --- timed chores
-	for id in ["grove", "tidepool", "windmill"]:
-		var g := Game.glimmer
-		_goto(id)
-		Engine.time_scale = 4.0
-		await _wait(5.0)
-		Engine.time_scale = 1.0
-		_check(Game.glimmer > g, "chore at %s pays glimmer" % id)
-	await _shot("04_chore")
+	# --- builder
+	var hammer := -1
+	var axe := -1
+	for t in Game.tools:
+		if t["kind"] == "hammer": hammer = int(t["id"])
+		if t["kind"] == "axe": axe = int(t["id"])
+	Game.give_tool(int(p1["id"]), hammer)
+	var hut: Dictionary = Game.buildings_of("builder_hut")[0]
+	_check(Game.assign(int(p1["id"]), int(hut["id"])) == "", "pet assigned as builder")
+	_check(Game.goal_index >= 2, "first two goals complete")
 
-	# --- starmail errand
-	_goto("post")
-	Engine.time_scale = 4.0
-	await _wait(1.5)
-	_check(main.mail_target >= 0, "starmail picked up")
-	await _shot("05_mail")
-	var g2 := Game.glimmer
-	_goto("mail%d" % main.mail_target)
-	await _wait(1.5)
+	# --- lumber camp built by the builder
+	var camp := _place("lumber_camp")
+	main.keeper.position = WorldMap.cell_to_world(camp["cell"]) + Vector2(64, 200)
+	main.snap_camera()
+	await _wait(0.6)
+	await _shot("04_construction")
+	Engine.time_scale = 8.0
+	await _wait_built(camp, 6.0)
 	Engine.time_scale = 1.0
-	_check(main.mail_target == -1 and Game.glimmer > g2, "starmail delivered")
+	_check(bool(camp["built"]), "lumber camp built by builder pet")
 
-	# --- lanterns
-	var g3 := Game.glimmer
-	Engine.time_scale = 4.0
+	# --- second pet from the nest becomes a woodcutter
+	var nest_egg: Dictionary = Game.eggs_at("nest")[0]
+	nest_egg["warmth"] = float(Data.EGGS[nest_egg["type"]]["warmth"]) - 0.2
+	await _wait(0.6)
+	await _close_all()
+	_check(Game.pets.size() == 2, "nest egg hatched")
+	var p2: Dictionary = Game.pets[1]
+	Game.give_tool(int(p2["id"]), axe)
+	_check(Game.assign(int(p2["id"]), int(camp["id"])) == "", "pet assigned to lumber camp")
+	var wood := int(Game.res["wood"])
+	Engine.time_scale = 8.0
+	await _wait(2.0)
+	Engine.time_scale = 1.0
+	_check(int(Game.res["wood"]) > wood, "woodcutter produces wood")
+	_check(int(p2["xp"]) > 0 or int(p2["level"]) > 1, "working gives pet xp")
+	_goto_building(camp)
+	main.snap_camera()
+	await _wait(0.5)
+	await _shot("05_lumber")
+
+	# --- keeper gathers by hand
+	var tree_cell := Vector2i(-1, -1)
+	for c in Game.map.nodes:
+		if Game.map.nodes[c] == "tree" and (Vector2(c) - WorldMap.CENTER).length() < 12.0:
+			tree_cell = c
+			break
+	main.keeper.position = WorldMap.cell_center(tree_cell) + Vector2(0, 64)
+	await _wait(0.2)
+	var w2 := int(Game.res["wood"])
+	main.action_cd = 0.0
+	_check(not main.action.is_empty() and main.action["kind"] == "gather", "keeper sees a gather action")
+	main.do_action()
+	_check(int(Game.res["wood"]) == w2 + 1, "keeper chops wood by hand")
+
+	# --- grow the town (grant resources so the test runs fast)
+	for r in ["wood", "stone", "berries", "fish"]:
+		Game.res[r] = 2000
+	Game.res["glimmer"] = 5000
+	Game.res["crystal"] = 500
+	var house := _place("house")
+	var quarry := _place("quarry")
+	var shop := _place("workshop")
+	var market := _place("market")
+	var farm := _place("berry_farm")
+	Game.add_build_progress(house, 999)
+	Game.add_build_progress(quarry, 999)
+	Game.add_build_progress(shop, 999)
+	Game.add_build_progress(market, 999)
+	_check(Game.capacity() == 4, "house adds room for pets")
+	_check(Game.craft("pickaxe", 1), "craft a stone pickaxe")
+	_check(Game.buy_egg("tide"), "buy a tide egg")
+	_check(Game.feed(int(p2["id"]), "berries"), "feed a pet")
+	for path_i in 4:
+		Game.place_building("flower_bed", _find_spot("flower_bed"))
+	_check(Game.upgrade_town(), "upgrade town hall to 2")
+	_check(Game.town_radius() > 10.0, "border grows")
+	var dock := _place("fishing_dock")
+	var lodge := _place("explorer_lodge")
+	_check(Game.upgrade_town(), "upgrade town hall to 3")
+	var mine := _place("crystal_mine")
+	for b in [farm, dock, lodge, mine]:
+		if not b.is_empty():
+			Game.add_build_progress(b, 999)
+	main._sync()
+
+	# --- hatch more pets and staff buildings
 	for i in 3:
-		_goto("lantern%d" % i)
-		await _wait(1.2)
-	Engine.time_scale = 1.0
-	_check(Game.glimmer > g3, "lantern ridge pays out")
-	_goto("lantern1")
-	main.player.position += Vector2(-120, -40)
-	await _wait(0.3)
-	await _shot("06_lanterns")
+		var e := Game.carried_egg()
+		if e.is_empty():
+			Game.buy_egg("meadow")
+			e = Game.carried_egg()
+		e["warmth"] = float(Data.EGGS[e["type"]]["warmth"])
+		Game.tick(0.1)
+	await _wait(0.2)
+	await _close_all()
+	_check(Game.pets.size() == 4, "four pets (town capacity)")
+	var p3: Dictionary = Game.pets[2]
+	var pick := -1
+	for t in Game.tools:
+		if t["kind"] == "pickaxe": pick = int(t["id"])
+	Game.give_tool(int(p3["id"]), pick)
+	_check(Game.assign(int(p3["id"]), int(quarry["id"])) == "", "miner assigned to quarry")
+	Game.craft("compass", 0)
+	var p4: Dictionary = Game.pets[3]
+	for t in Game.free_tools():
+		if t["kind"] == "compass":
+			Game.give_tool(int(p4["id"]), int(t["id"]))
+	_check(Game.assign(int(p4["id"]), int(lodge["id"])) == "", "explorer assigned")
+	_check(Game.assign(int(p3["id"]), int(camp["id"])) != "", "wrong tool is rejected")
 
-	# --- shop & collection
-	_goto("kiosk")
+	# --- levels and skill caps
+	for i in 60:
+		Game.feed(int(p2["id"]), "fish")
+	_check(int(p2["level"]) == Data.MAX_LEVEL, "feeding fish reaches max level")
+	var sk_before := int(Game.skill(p2, "woodcutting")["lvl"])
+	Game.simulate(600)
+	_check(int(Game.skill(p2, "woodcutting")["lvl"]) > sk_before, "woodcutting skill rises with work")
+	_check(int(Game.skill(p1, "building")["lvl"]) <= int(p1["level"]), "skill capped by pet level")
+	_check(Game.charm() >= 4, "decorations add charm")
+
+	# --- offline progress
+	var before := Game.res.duplicate()
+	var rep := Game.simulate(3600)
+	_check(int(Game.res["wood"]) > int(before["wood"]) and int(Game.res["stone"]) > int(before["stone"]), "offline hour gathers wood and stone")
+	_check(int(Game.stats.get("trips", 0)) > 0, "explorers made trips")
+	_check(rep.has("gains"), "offline report built")
+	main._sync()
+
+	# --- screens
+	main.zoom_level = 0.6
+	main._apply_zoom()
+	main.keeper.position = WorldMap.CENTER * 64.0 + Vector2(-120, 220)
+	main.snap_camera()
+	await _wait(1.2)
+	await _shot("06_town")
+	main.zoom_level = 0.85
+	main._apply_zoom()
+	_goto_building(camp)
+	await _wait(0.6)
+	main.tap_world(WorldMap.cell_to_world(camp["cell"]) + Vector2(64, 64))
+	await _wait(0.2)
+	_check(main.hud.is_modal_open(), "tapping a building opens its panel")
+	await _shot("07_lumber_panel")
+	main.hud.open_pet(int(p2["id"]))
+	await _wait(0.2)
+	await _shot("08_pet")
+	main.hud.open_building(int(shop["id"]))
+	await _wait(0.2)
+	await _shot("09_workshop")
+	main.hud.open_building(int(Game.buildings_of("town_hall")[0]["id"]))
+	await _wait(0.2)
+	await _shot("10_townhall")
+	main.hud.open_build()
 	await _wait(0.3)
-	_check(main.hud.action_btn.visible, "kiosk shows action button")
-	await _shot("07_kiosk")
-	Game.glimmer = 5000
-	main.hud.open_shop()
-	await _wait(0.3)
-	await _shot("08_shop")
-	for et in Data.EGG_ORDER:
-		_check(Game.buy_egg(et), "buy %s egg" % et)
-	_check(Game.eggs.size() == 4, "own four eggs")
-	main.hud.open_eggs()
-	await _wait(0.3)
-	await _shot("09_eggs")
-	# force-hatch every egg to fill the collection
-	for i in 4:
-		var e: Dictionary = Game.get_carried_egg()
-		e["warmth"] = int(Data.EGGS[e["type"]]["warmth"]) - 1
-		Game.complete_job("nap")
-		await _wait(0.1)
-	main.hud.close_modal()
-	while main.hud.is_modal_open():
-		main.hud.close_modal()
-		await _wait(0.1)
-	_check(Game.pets.size() == 5, "five pets after hatching bought eggs")
-	# level one pet to Radiant
-	var p: Dictionary = Game.pets[Game.pets.size() - 1]
-	Game.set_companion(int(p["id"]))
-	for i in 40:
-		Game.complete_job("lanterns")
-	_check(int(p["level"]) == Data.MAX_LEVEL, "companion reaches Radiant")
-	p["prism"] = true
-	Game.changed.emit()
-	main.player.position = main.world_center + Vector2(200, 260)
-	await _wait(1.0)
-	await _shot("10_radiant")
+	await _shot("11_build")
 	main.hud._pets_tab = "mine"
 	main.hud.open_pets()
-	await _wait(0.3)
-	await _shot("11_pets")
-	main.hud._pets_tab = "dex"
+	await _wait(0.2)
+	await _shot("12_pets")
+	main.hud._pets_tab = "log"
 	main.hud.open_pets()
+	await _wait(0.2)
+	await _shot("13_petlog")
+	await _close_all()
+	main.start_placing("house")
+	main.tap_world(WorldMap.cell_to_world(Vector2i(46, 46)))
 	await _wait(0.3)
-	await _shot("12_bestiary")
-	main.hud.close_modal()
+	await _shot("14_placing")
+	main.cancel_place()
+	_goto_building(dock, Vector2(0, -40))
+	main.keeper.position.x -= 200
+	main.snap_camera()
+	await _wait(0.8)
+	await _shot("15_lake")
+	_goto_building(mine)
+	main.snap_camera()
+	await _wait(0.8)
+	await _shot("16_crystal")
 
 	# --- save / load
 	Game.save_game()
-	var before_pets := Game.pets.size()
-	var before_glim := Game.glimmer
+	var n_pets := Game.pets.size()
+	var n_b := Game.buildings.size()
 	_check(Game.load_game(), "save loads")
-	_check(Game.pets.size() == before_pets and Game.glimmer == before_glim, "save round-trips")
+	_check(Game.pets.size() == n_pets and Game.buildings.size() == n_b, "save round-trips")
 
 	Game.reset_save()
 	print("Screenshots: ", shot_dir)

@@ -1,73 +1,81 @@
 # Driftnest
 
-A cozy creature-raising game made with **Godot 4.3**, built for **iOS**, with a **web build on GitHub Pages** for quick testing.
+A cozy pet-town game made with **Godot 4.3**, built for **iOS**, with a **web build on GitHub Pages** for quick testing.
 
-You're the new Keeper of a floating sky island. You start with a Dawn Egg on your back. Doing chores around the island warms the egg until it hatches into a creature — a real animal or a mythical one — that follows you around, grows as you work together, and joins your collection.
+You're the new Keeper of a little town in the meadows. Hatch pets from eggs, give them tools and jobs, and grow the town together: chop wood, dig stone, catch fish, build houses and push the town border out towards the lake and the crystal hills.
 
-## How it plays
+## The loop
 
-| Thing | How it works |
+1. **Hatch.** The egg you carry warms up over time (the Nest warms more at half speed, even while you're away). Each hatch is a random real or mythical creature from that egg's pool.
+2. **Equip.** A pet's **tool** decides its job: Axe → woodcutting, Basket → foraging, Pickaxe → mining, Fishing Rod → fishing, Hammer → building, Compass → exploring.
+3. **Assign.** Send it to a matching workplace. It walks there and starts producing.
+4. **Build.** Spend resources to place buildings anywhere inside the town border. Builder pets at the Builder's Hut put them up, and you can help by hand.
+5. **Grow.** Houses raise the pet cap. Upgrading the Town Hall widens the border and unlocks new buildings. Decorations add **charm** (+1% to all production per point, up to +50%).
+
+## Pets, talents and skills
+
+| | |
 |---|---|
-| **Eggs & warmth** | The egg you carry gains warmth from every chore. Full warmth = it hatches. |
-| **Chores** | Stand in a spot until the ring fills: *Moonberry Grove*, *Tidepool*, *Cloudmill*, *The Nest* (nap). Two are errands: *Starmail* (pick up at the Star Post, follow the arrow to a glowing mailbox) and *Lantern Ridge* (light all three lanterns). |
-| **Glimmer** | The currency. Earned from chores, spent at the **Egg Kiosk**. |
-| **Wishes** | Your companion has a thought bubble showing the chore it wants. Grant it for 2× XP and +10 glimmer. |
-| **Habitats** | Meadow, Tide, Ember, Aurora. A companion is 50% faster at chores from its own habitat, and +8% faster per level. |
-| **Growth** | Sprout → Fledgling → Bloom → Elder → Radiant (Lv 1–5). Creatures get bigger, Elders get orbiting sparkles, Radiants get a halo and aura. Kitsune grow extra tails (up to 9). |
-| **Collecting** | 20 species across 4 buyable eggs, rarities Common → Legendary, and a 1-in-25 **Prismatic** colour variant. Undiscovered species show as `???` and silhouettes in the Bestiary. |
+| **Talents** | Every species has 1–2 natural talents (e.g. Capybara: Fishing + Foraging, Qilin: Building + Foraging). Talented work is **x1.5**. Shown in the Pet Log once discovered. |
+| **Tools** | Crafted at the Workshop. Wooden x1, Stone x1.5, Crystal x2.2. |
+| **Pet level** (1–10) | Gained by working, or by feeding berries (+4 xp) and fish (+12 xp). Growth stages: Sprout, Fledgling, Bloom, Elder, Radiant. |
+| **Job skills** | Each job has its own skill that rises while the pet works it, **capped at the pet's level**. Each skill level is +15% speed. |
+| **Explorers** | Go on trips and bring back glimmer, supplies and, about 12% of the time, a new egg. |
 
-Controls: WASD / arrow keys, or the on-screen stick (touch or mouse-drag). Progress auto-saves (browser storage on web, app sandbox on iOS).
+Pets keep working while the game is closed, for up to **8 hours**. You get a "welcome back" summary when you return. A hidden browser tab or a backgrounded iOS app catches up the same way.
+
+## Buildings
+
+| Building | Town Hall | Notes |
+|---|---|---|
+| House | 1 | +2 pet capacity, small glimmer income |
+| Lumber Camp | 1 | Wood. Needs 3 trees nearby (Planted Trees count) |
+| Berry Farm | 1 | Berries |
+| Quarry | 1 | Stone. Needs 2 rocks nearby |
+| Workshop | 1 | Craft tools |
+| Market | 1 | Sell resources for glimmer |
+| Fishing Dock | 2 | Fish. Must touch the lake |
+| Explorer's Lodge | 2 | Glimmer, supplies, eggs |
+| Crystal Mine | 3 | Crystal. Needs a crystal outcrop nearby |
+| Path, Flower Bed, Planted Tree, Lamp Post | 1 | Decorations / charm |
+| Fountain / Pet Statue | 3 / 4 | Big charm |
+
+The map is an open 80×80-tile meadow: forest to the west, rocks to the north, a berry patch, a lake to the south-east, and crystal hills to the east. There's a tutorial goal chain in the top-left that walks new players through all of it.
+
+Controls: WASD / arrows or the on-screen stick to walk. Tap pets and buildings to manage them. Hold the action button near trees, rocks, bushes, water or construction sites to gather or help. Zoom with +/-, the mouse wheel or a pinch.
 
 ## Project layout
 
 ```
-project.godot            landscape 1280×720, expand stretch, GL Compatibility renderer
-scenes/main.tscn         single entry scene
-scripts/data.gd          ALL content: species, eggs, chores, rarity, stages  ← start here to add creatures
-scripts/game.gd          autoload "Game": state, rewards, hatching, save/load
-scripts/main.gd          world layout, movement, chore logic
-scripts/hud.gd           all UI (built in code): cards, Egg Kiosk, Pets/Bestiary, Eggs, Help, hatch reveal
-scripts/pet_art.gd       procedural creature + egg drawing (no image assets)
-scripts/player.gd, pet_follower.gd, prop.gd, terrain.gd, sky.gd, overlay.gd, joystick.gd, portrait.gd
+scripts/data.gd          ALL content: species + talents, eggs, jobs, tools, buildings, town levels, goals  ← tune here
+scripts/game.gd          autoload "Game": state, simulation tick, offline catch-up, actions, save/load
+scripts/world_map.gd     seeded map generation (trees, rocks, lake, crystals) on a tile grid
+scripts/main.gd          world scene, Keeper movement, taps, building placement, Keeper actions
+scripts/hud.gd           all UI (built in code): resource bar, goals, Build menu, building panels, pets, Pet Log, eggs
+scripts/building_view.gd procedural building art (+ construction + placement ghost)
+scripts/pet_actor.gd     pets walking to work / wandering
+scripts/pet_art.gd       procedural creatures, eggs and tool icons
+scripts/nature_prop.gd, terrain.gd, overlay.gd, player.gd, portrait.gd, joystick.gd
 tests/smoke.gd           automated play-through used by CI
-export_presets.cfg       "Web" and "iOS" presets
-.github/workflows/deploy-web.yml
 ```
 
-All art is drawn with code, so there are no assets to import and the web build is small. When you're ready for real art, swap `PetArt.draw_pet` for sprites per species — the rest of the game doesn't care how creatures are drawn.
-
-### Adding a creature
-1. Add an entry to `SPECIES` in `scripts/data.gd` (pick body/accent colours and an `ears`/`tail`/`extra` combo) and add its id to `SPECIES_ORDER`.
-2. Add `["your_id", weight]` to an egg's `pool`.
+All art is drawn in code. To add a creature, add it to `SPECIES` (with `talents`) and `SPECIES_ORDER` in `data.gd`, then add it to an egg's `pool`. To add a building, add it to `BUILDINGS` + `BUILD_ORDER` and give it a drawing in `building_view.gd`.
 
 ## Web test build on GitHub Pages
 
-1. Push this folder to a GitHub repo (branch `main`).
-2. In the repo: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. Every push to `main` runs the workflow: imports the project, runs the smoke test, exports the **Web** preset and publishes it. The URL appears on the workflow run and in Settings → Pages.
+Every push to `main` runs `.github/workflows/deploy-web.yml`. It imports the project, runs the smoke test, exports the **Web** preset (no-threads, so it works on Pages and iPhone Safari) and publishes it.
 
-The Web preset uses Godot's **no-threads** template, so it runs on GitHub Pages without the special cross-origin headers threaded builds need, and it works in iOS Safari.
+One-time setup: **Settings → Pages → Source: GitHub Actions**.
 
 ## iOS build
 
-You need a Mac with Xcode and an Apple Developer account.
+You need a Mac with Xcode and an Apple Developer account. In Godot 4.3: install export templates, then **Project → Export → iOS**. Set your Team ID, a bundle ID you own (placeholder: `com.loworld.driftnest`) and app icons, then export and run from Xcode.
 
-1. Open the project in Godot 4.3, then **Editor → Manage Export Templates → Download and Install**.
-2. **Project → Export → iOS**: fill in **App Store Team ID**, check the **Bundle Identifier** (`com.loworld.driftnest` — change it to one you own), and add app icons under *Icons* (1024×1024 at minimum).
-3. Export. Godot writes an Xcode project into `build/ios/`; open it in Xcode, pick your device and run (or Archive → TestFlight).
-
-The game is landscape-only (sensor landscape) and uses the GL Compatibility renderer, which runs on every iPhone that supports iOS 12+.
-
-## Running the tests locally
+## Tests
 
 ```
 godot --headless --path . -- --smoke
 ```
-Prints `SMOKE OK` and exits 0 if hatching, every chore, the shop, levelling to Radiant and save/load all work. Drop `--headless` to watch it play and get screenshots in Godot's user data folder (`shots/`).
+Plays through hatching, building, every job, crafting, feeding, buying eggs, Town Hall upgrades, skill caps, an offline hour and save/load. It prints `SMOKE OK` on success. Drop `--headless` to watch it and get screenshots in Godot's user data folder (`shots/`).
 
-## Ideas for next steps
-- Trading / gifting between friends (needs a backend — e.g. Firebase or Nakama)
-- Customisable Keeper house on a second island
-- Fusing four of the same creature into a guaranteed Prismatic
-- Day/night cycle where Aurora chores only appear at night
-- Sound and music
+Saves from the earlier sky-island version aren't compatible, so they start a fresh town.

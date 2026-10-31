@@ -36,7 +36,7 @@ static func shift_hue(c: Color, amount: float, sat_boost: float = 0.2) -> Color:
 	return Color.from_hsv(fposmod(c.h + amount, 1.0), clampf(c.s + sat_boost, 0.0, 1.0), clampf(c.v + 0.05, 0.0, 1.0), c.a)
 
 
-## Draws a creature. `pos` is the body centre; `size` is the body radius at level 1.
+## Draws a creature. `pos` is the body centre; `size` is the body radius at stage 1. `level` is the pet level (1-10).
 static func draw_pet(ci: CanvasItem, pos: Vector2, species_id: String, level: int, prism: bool,
 		t: float, size: float, facing: float = 1.0, silhouette: bool = false) -> void:
 	if not Data.SPECIES.has(species_id):
@@ -54,7 +54,7 @@ static func draw_pet(ci: CanvasItem, pos: Vector2, species_id: String, level: in
 		acc = body
 		dark = body
 		ink = body
-	var lvl := clampi(level, 1, Data.MAX_LEVEL)
+	var lvl := Data.stage_of(level) # growth stage 1..5
 	var s := size * Data.stage_scale(lvl)
 	var phase := float(species_id.length()) * 0.7
 	var bob := sin(t * 3.0 + phase) * 0.05
@@ -68,7 +68,7 @@ static func draw_pet(ci: CanvasItem, pos: Vector2, species_id: String, level: in
 	# shadow + radiant aura
 	if not silhouette:
 		ell(ci, base, Vector2(0, 0.95), Vector2(0.95, 0.22), Color(0, 0, 0, 0.16))
-		if lvl >= Data.MAX_LEVEL or extra == "glow":
+		if lvl >= Data.MAX_STAGE or extra == "glow":
 			var pulse := 0.5 + 0.5 * sin(t * 2.5)
 			circ(ci, xf, Vector2(0, -0.05), 1.55 + 0.08 * pulse, Color(acc, 0.18 + 0.1 * pulse))
 			circ(ci, xf, Vector2(0, -0.05), 1.3, Color(acc, 0.16))
@@ -220,7 +220,7 @@ static func draw_pet(ci: CanvasItem, pos: Vector2, species_id: String, level: in
 			for k in 3:
 				var a := t * 1.5 + TAU * k / 3.0
 				circ(ci, xf, Vector2(cos(a) * 1.25, -0.2 + sin(a) * 0.4), 0.06, Color(1.0, 0.95, 0.6, 0.9))
-		if lvl >= Data.MAX_LEVEL:
+		if lvl >= Data.MAX_STAGE:
 			var halo_y := -1.35 if ears in ["none", "round", "gills"] else -1.75
 			ci.draw_arc(xf * Vector2(0.18, halo_y), 0.35 * s, 0.0, TAU, 32, Color("#ffe27a"), maxf(2.0, 0.08 * s), true)
 		if prism:
@@ -268,3 +268,35 @@ static func draw_egg(ci: CanvasItem, pos: Vector2, egg_type: String, size: float
 		var zig := [Vector2(-0.6, -0.05), Vector2(-0.35, -0.2), Vector2(-0.15, 0.0), Vector2(0.1, -0.22), Vector2(0.3, 0.0), Vector2(0.55, -0.15)]
 		for i in zig.size() - 1:
 			line(ci, xf, zig[i], zig[i + 1], cr, 0.05)
+
+
+## Small tool icon (axe, basket, pickaxe, rod, hammer, compass). `pos` is the icon centre.
+static func draw_tool(ci: CanvasItem, pos: Vector2, kind: String, tier: int, size: float, angle: float = 0.0) -> void:
+	var xf := Transform2D(angle, Vector2(size, size), 0.0, pos)
+	var handle := Color("#8b5e3c")
+	var head := Color(str(Data.TIERS[clampi(tier, 0, Data.TIERS.size() - 1)]["color"]))
+	var dark := head.darkened(0.3)
+	match kind:
+		"axe":
+			line(ci, xf, Vector2(0, 0.9), Vector2(0, -0.8), handle, 0.16)
+			ci.draw_colored_polygon(PackedVector2Array([xf * Vector2(0, -0.8), xf * Vector2(0.65, -1.0), xf * Vector2(0.75, -0.2), xf * Vector2(0, -0.35)]), head)
+		"pickaxe":
+			line(ci, xf, Vector2(0, 0.9), Vector2(0, -0.7), handle, 0.16)
+			ci.draw_polyline(PackedVector2Array([xf * Vector2(-0.8, -0.35), xf * Vector2(-0.4, -0.75), xf * Vector2(0, -0.85), xf * Vector2(0.4, -0.75), xf * Vector2(0.8, -0.35)]), head, maxf(2.0, 0.22 * size), true)
+		"hammer":
+			line(ci, xf, Vector2(0, 0.9), Vector2(0, -0.5), handle, 0.16)
+			ci.draw_colored_polygon(PackedVector2Array([xf * Vector2(-0.55, -0.85), xf * Vector2(0.55, -0.85), xf * Vector2(0.55, -0.4), xf * Vector2(-0.55, -0.4)]), head)
+		"rod":
+			line(ci, xf, Vector2(-0.6, 0.9), Vector2(0.6, -0.9), handle, 0.12)
+			line(ci, xf, Vector2(0.6, -0.9), Vector2(0.6, 0.3), Color(1, 1, 1, 0.8), 0.05)
+			circ(ci, xf, Vector2(0.6, 0.35), 0.14, head)
+		"basket":
+			ci.draw_colored_polygon(PackedVector2Array([xf * Vector2(-0.75, -0.1), xf * Vector2(0.75, -0.1), xf * Vector2(0.5, 0.8), xf * Vector2(-0.5, 0.8)]), head)
+			ci.draw_arc(xf * Vector2(0, -0.1), 0.55 * size, PI, TAU, 16, handle, maxf(2.0, 0.12 * size), true)
+			for k in 3:
+				line(ci, xf, Vector2(-0.55 + 0.55 * k, 0.05), Vector2(-0.4 + 0.4 * k, 0.7), dark, 0.06)
+		"compass":
+			circ(ci, xf, Vector2.ZERO, 0.8, head)
+			circ(ci, xf, Vector2.ZERO, 0.62, Color("#fffaf0"))
+			ci.draw_colored_polygon(PackedVector2Array([xf * Vector2(0, -0.55), xf * Vector2(0.15, 0), xf * Vector2(-0.15, 0)]), Color("#e46a5a"))
+			ci.draw_colored_polygon(PackedVector2Array([xf * Vector2(0, 0.55), xf * Vector2(0.15, 0), xf * Vector2(-0.15, 0)]), Color("#5a6470"))

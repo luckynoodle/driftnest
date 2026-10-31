@@ -1,48 +1,46 @@
 extends Node2D
-## Builds the island world, moves the Keeper, runs chores and hands rewards to Game.
+## Builds the open-world town scene, moves the Keeper, handles taps, building placement
+## and the Keeper's hands-on actions. Game state and the simulation live in the Game autoload.
 
-const SkyScript := preload("res://scripts/sky.gd")
+const T := WorldMap.TILE
+const SPEED := 330.0
 const TerrainScript := preload("res://scripts/terrain.gd")
-const PropScript := preload("res://scripts/prop.gd")
 
-const CENTER := Vector2(1500, 1050)
-const RADII := Vector2(1400, 900)
-const WALK_LIMIT := 0.93
-const SPEED := 320.0
-
-var player: Keeper
-var pet: PetFollower
+var keeper: Keeper
 var ysort: Node2D
 var overlay: WorldOverlay
-var terrain = null
 var hud: GameHud
-var world_center := CENTER
-var world_radii := RADII
 var cam: Camera2D
 
-var stations: Array = []
-var paths: Array = []
-var active := -1
-var progress := 0.0
-var cooldown := 0.0
-var mail_target := -1
-var lantern_lit := [false, false, false]
-var lantern_reset := 0.0
+var building_nodes: Dictionary = {} # bid -> BuildingView
+var pet_nodes: Dictionary = {} # pid -> PetActor
+var occupied: Dictionary = {} # Vector2i -> bid (solid buildings only)
+
+var placing := ""
+var ghost: BuildingView
+var ghost_cell := Vector2i.ZERO
+var ghost_reason := ""
+
+var action: Dictionary = {}
+var action_hold := false
+var action_cd := 0.0
+var action_cd_max := 0.45
+
+var zoom_level := 0.85
+var _touches: Dictionary = {}
+var _pinch_start := 0.0
+var _pinch_zoom := 1.0
+var _tap_start: Dictionary = {}
 
 # test hook: scripted input used by the automated smoke test
 var auto_dir := Vector2.ZERO
 
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color(Color("#a8dcf2"))
-	_define_stations()
+	RenderingServer.set_default_clear_color(Color("#5f9e4a"))
 
-	var sky: Node2D = SkyScript.new()
-	sky.z_index = -20
-	add_child(sky)
-
-	terrain = TerrainScript.new()
-	terrain.main = self
+	var terrain: Node2D = TerrainScript.new()
+	terrain.map = Game.map
 	terrain.z_index = -10
 	add_child(terrain)
 
@@ -50,15 +48,17 @@ func _ready() -> void:
 	ysort.y_sort_enabled = true
 	add_child(ysort)
 
-	player = Keeper.new()
-	player.position = CENTER + Vector2(0, 170)
-	ysort.add_child(player)
+	for cell in Game.map.nodes:
+		var pr := NatureProp.new()
+		pr.kind = Game.map.nodes[cell]
+		pr.variant = WorldMap.hash01(cell, 1)
+		pr.position = WorldMap.cell_center(cell) + Vector2((WorldMap.hash01(cell, 2) - 0.5) * 16.0, T * 0.35)
+		ysort.add_child(pr)
 
-	pet = PetFollower.new()
-	pet.position = player.position + Vector2(-60, 0)
-	ysort.add_child(pet)
-
-	_spawn_props()
+	keeper = Keeper.new()
+	keeper.scale = Vector2(0.8, 0.8)
+	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
+	ysort.add_child(keeper)
 
 	overlay = WorldOverlay.new()
 	overlay.main = self
@@ -66,22 +66,25 @@ func _ready() -> void:
 	add_child(overlay)
 
 	cam = Camera2D.new()
-	cam.position = player.position
+	cam.position = keeper.position
 	cam.position_smoothing_enabled = true
-	cam.position_smoothing_speed = 6.0
-	cam.limit_left = -300
-	cam.limit_top = -300
-	cam.limit_right = 3300
-	cam.limit_bottom = 2450
+	cam.position_smoothing_speed = 7.0
+	cam.limit_left = 0
+	cam.limit_top = 0
+	cam.limit_right = int(WorldMap.SIZE * T)
+	cam.limit_bottom = int(WorldMap.SIZE * T)
 	add_child(cam)
 	cam.make_current()
+	_apply_zoom()
 
 	hud = GameHud.new()
 	hud.main = self
 	add_child(hud)
 
-	Game.changed.connect(_refresh_pet)
-	_refresh_pet()
+	Game.changed.connect(_sync)
+	Game.building_done.connect(func(_b): _sync())
+	Game.produced.connect(_on_produced)
+	_sync()
 
 	if "--smoke" in OS.get_cmdline_user_args():
 		var smoke = load("res://tests/smoke.gd").new()
@@ -89,122 +92,206 @@ func _ready() -> void:
 		add_child(smoke)
 
 
-# ================================================================ world layout
+# ================================================================ syncing nodes with state
 
-func _add_station(id: String, kind: String, job: String, pos: Vector2, radius: float, label: String, label_y: float, index: int = 0) -> void:
-	stations.append({"id": id, "kind": kind, "job": job, "pos": pos, "radius": radius,
-		"label": label, "label_y": label_y, "index": index})
+func _sync() -> void:
+	var seen := {}
+	occupied.clear()
+	for b in Game.buildings:
+		var bid := int(b["id"])
+		seen[bid] = true
+		var node: BuildingView = building_nodes.get(bid)
+		if node == null:
+			node = BuildingView.new()
+			node.setup(b["type"], bid)
+			ysort.add_child(node)
+			building_nodes[bid] = node
+		var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+		node.position = WorldMap.cell_to_world(b["cell"]) + Vector2(size.x * T / 2.0, size.y * T)
+		if not bool(Data.BUILDINGS[b["type"]].get("deco", false)) or size.x > 1 or b["type"] == "lamp":
+			for y in size.y:
+				for x in size.x:
+					occupied[b["cell"] + Vector2i(x, y)] = bid
+	for bid in building_nodes.keys():
+		if not seen.has(bid):
+			building_nodes[bid].queue_free()
+			building_nodes.erase(bid)
 
-
-func _define_stations() -> void:
-	_add_station("nest", "timed", "nap", CENTER, 115, "The Nest", -80)
-	_add_station("kiosk", "kiosk", "", Vector2(1900, 880), 95, "Egg Kiosk", -210)
-	_add_station("grove", "timed", "berries", Vector2(880, 640), 115, "Moonberry Grove", -150)
-	_add_station("windmill", "timed", "windmill", Vector2(2300, 600), 100, "Cloudmill", -290)
-	_add_station("tidepool", "timed", "tidepool", Vector2(760, 1420), 125, "Tidepool", -130)
-	_add_station("post", "post", "starmail", Vector2(1450, 640), 85, "Star Post", -200)
-	var mailboxes := [Vector2(980, 1060), Vector2(2050, 1300), Vector2(1250, 1620), Vector2(2620, 980)]
-	for i in mailboxes.size():
-		_add_station("mail%d" % i, "mailbox", "starmail", mailboxes[i], 60, "", 0, i)
-	var lanterns := [Vector2(2200, 1480), Vector2(2420, 1580), Vector2(2560, 1320)]
-	for i in lanterns.size():
-		_add_station("lantern%d" % i, "lantern", "lanterns", lanterns[i], 62, "Lantern Ridge" if i == 1 else "", 90 if i == 1 else 0, i)
-
-	var hub := CENTER
-	for id in ["kiosk", "grove", "windmill", "tidepool", "post"]:
-		paths.append([hub, station_by_id(id)["pos"]])
-	paths.append([hub, Vector2(2380, 1450)])
-	paths.append([station_by_id("post")["pos"], station_by_id("grove")["pos"]])
-	paths.append([station_by_id("post")["pos"], station_by_id("windmill")["pos"]])
-	# each mailbox gets a short path to the closest main path
-	for mb: Vector2 in mailboxes:
-		var best := Vector2.ZERO
-		var best_d := INF
-		for seg in paths.duplicate():
-			var q := Geometry2D.get_closest_point_to_segment(mb, seg[0], seg[1])
-			if mb.distance_to(q) < best_d:
-				best_d = mb.distance_to(q)
-				best = q
-		paths.append([best, mb])
-
-
-func station_by_id(id: String) -> Dictionary:
-	for st in stations:
-		if st["id"] == id:
-			return st
-	return {}
+	var pseen := {}
+	for p in Game.pets:
+		var pid := int(p["id"])
+		pseen[pid] = true
+		if not pet_nodes.has(pid):
+			var a := PetActor.new()
+			a.pid = pid
+			a.position = keeper.position
+			if _nest_id() != -1:
+				a.position = WorldMap.cell_to_world(Game.find_building(_nest_id())["cell"]) + Vector2(64, 150)
+			ysort.add_child(a)
+			pet_nodes[pid] = a
+	for pid in pet_nodes.keys():
+		if not pseen.has(pid):
+			pet_nodes[pid].queue_free()
+			pet_nodes.erase(pid)
 
 
-func mailbox_pos(index: int) -> Vector2:
-	return station_by_id("mail%d" % index)["pos"]
+func _nest_id() -> int:
+	var n := Game.buildings_of("nest")
+	return -1 if n.is_empty() else int(n[0]["id"])
 
 
-## Used for decoration placement: is `p` too close to a station or path?
-func is_blocked(p: Vector2, margin: float) -> bool:
-	for st in stations:
-		if p.distance_to(st["pos"]) < float(st["radius"]) + margin + 30.0:
-			return true
-	for seg in paths:
-		var q := Geometry2D.get_closest_point_to_segment(p, seg[0], seg[1])
-		if p.distance_to(q) < 30.0 + margin:
-			return true
-	return false
+func _on_produced(pid: int, _bid: int, r: String, amount: int) -> void:
+	var node: Node2D = pet_nodes.get(pid)
+	if node == null:
+		return
+	overlay.float_text("+%d %s" % [amount, Data.RESOURCES[r]["name"].to_lower()], node.position + Vector2(0, -50),
+		Color(Data.RESOURCES[r]["color"]).lightened(0.35))
 
 
-func _spawn_prop(kind: String, pos: Vector2, station: int = -1, variant: float = 0.5) -> void:
-	var pr = PropScript.new()
-	pr.kind = kind
-	pr.main = self
-	pr.station = station
-	pr.variant = variant
-	pr.position = pos
-	ysort.add_child(pr)
+# ================================================================ camera & input
+
+func _apply_zoom() -> void:
+	zoom_level = clampf(zoom_level, 0.4, 1.4)
+	cam.zoom = Vector2(zoom_level, zoom_level)
 
 
-func _spawn_props() -> void:
-	for i in stations.size():
-		var st: Dictionary = stations[i]
-		var p: Vector2 = st["pos"]
-		match str(st["id"]):
-			"kiosk": _spawn_prop("kiosk", p + Vector2(0, -55), i)
-			"windmill": _spawn_prop("mill", p + Vector2(0, -70), i)
-			"post": _spawn_prop("post", p + Vector2(0, -45), i)
-			"grove":
-				for k in 6:
-					var a := TAU * k / 6.0 + 0.3
-					_spawn_prop("berry_bush", p + Vector2(cos(a) * 128, sin(a) * 92), i, 0.3 + 0.12 * k)
-			"tidepool":
-				for k in 7:
-					var a2 := TAU * k / 7.0
-					_spawn_prop("pool_rock", p + Vector2(cos(a2) * 160, sin(a2) * 100), -1, fmod(k * 0.37, 1.0))
-		match str(st["kind"]):
-			"mailbox": _spawn_prop("mailbox", p + Vector2(0, -24), i)
-			"lantern": _spawn_prop("lantern", p + Vector2(0, -18), i)
+func snap_camera() -> void:
+	cam.position = keeper.position
+	cam.reset_smoothing()
 
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 1234
-	var placed := 0
-	var tries := 0
-	while placed < 60 and tries < 4000:
-		tries += 1
-		var a := rng.randf() * TAU
-		var r := sqrt(rng.randf()) * 0.9
-		var p := CENTER + Vector2(cos(a) * RADII.x, sin(a) * RADII.y) * r
-		if is_blocked(p, 40.0) or p.distance_to(player.position) < 120.0:
-			continue
-		var roll := rng.randf()
-		var kind := "tree"
-		if roll > 0.82:
-			kind = "rock"
-		elif roll > 0.62:
-			kind = "bush"
-		elif roll > 0.45:
-			kind = "pine"
-		_spawn_prop(kind, p, -1, rng.randf())
-		placed += 1
+
+func zoom_by(f: float) -> void:
+	zoom_level *= f
+	_apply_zoom()
+
+
+func screen_to_world(p: Vector2) -> Vector2:
+	return get_canvas_transform().affine_inverse() * p
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if hud.is_modal_open():
+		return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			zoom_by(1.1)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			zoom_by(1.0 / 1.1)
+	elif event is InputEventMagnifyGesture:
+		zoom_by(event.factor)
+	elif event is InputEventScreenTouch:
+		if event.pressed:
+			_touches[event.index] = event.position
+			_tap_start[event.index] = event.position
+			if _touches.size() == 2:
+				var v: Array = _touches.values()
+				_pinch_start = (v[0] as Vector2).distance_to(v[1])
+				_pinch_zoom = zoom_level
+		else:
+			var start: Vector2 = _tap_start.get(event.index, event.position)
+			var was_pinch := _touches.size() >= 2
+			_touches.erase(event.index)
+			_tap_start.erase(event.index)
+			if not was_pinch and start.distance_to(event.position) < 24.0:
+				tap_world(screen_to_world(event.position))
+	elif event is InputEventScreenDrag:
+		_touches[event.index] = event.position
+		if _touches.size() == 2 and _pinch_start > 0.0:
+			var v2: Array = _touches.values()
+			zoom_level = _pinch_zoom * (v2[0] as Vector2).distance_to(v2[1]) / _pinch_start
+			_apply_zoom()
+
+
+func tap_world(p: Vector2) -> void:
+	if placing != "":
+		var size: Vector2i = Data.BUILDINGS[placing]["size"]
+		ghost_cell = WorldMap.world_to_cell(p) - Vector2i(size.x / 2, size.y / 2)
+		if size.x > 1:
+			ghost_cell = WorldMap.world_to_cell(p + Vector2(T / 2.0, T / 2.0)) - Vector2i(size.x / 2, size.y / 2)
+		_update_ghost()
+		return
+	# pets first (they stand in front of buildings)
+	var best := -1
+	var best_d := 40.0
+	for pid in pet_nodes:
+		var d: float = (pet_nodes[pid].position + Vector2(0, -20)).distance_to(p)
+		if d < best_d:
+			best_d = d
+			best = pid
+	if best != -1:
+		hud.open_pet(best)
+		return
+	for b in Game.buildings:
+		var size2: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+		var r := Rect2(WorldMap.cell_to_world(b["cell"]) - Vector2(0, 60), Vector2(size2) * T + Vector2(0, 60))
+		if r.has_point(p):
+			hud.open_building(int(b["id"]))
+			return
+
+
+# ================================================================ placement
+
+func start_placing(type: String) -> void:
+	placing = type
+	if ghost == null:
+		ghost = BuildingView.new()
+		ghost.ghost = true
+		ghost.z_index = 40
+		add_child(ghost)
+	ghost.setup(type, -1)
+	ghost.z_index = 40
+	ghost.visible = true
+	var size: Vector2i = Data.BUILDINGS[type]["size"]
+	var kc := WorldMap.world_to_cell(keeper.position)
+	ghost_cell = kc + Vector2i(1, -size.y)
+	_update_ghost()
+
+
+func _update_ghost() -> void:
+	if ghost == null or placing == "":
+		return
+	var size: Vector2i = Data.BUILDINGS[placing]["size"]
+	ghost.position = WorldMap.cell_to_world(ghost_cell) + Vector2(size.x * T / 2.0, size.y * T)
+	ghost_reason = Game.can_place(placing, ghost_cell)
+	ghost.ghost_ok = ghost_reason == ""
+	hud.update_placement(placing, ghost_reason)
+
+
+func move_ghost(d: Vector2i) -> void:
+	ghost_cell += d
+	_update_ghost()
+
+
+func confirm_place() -> void:
+	if placing == "":
+		return
+	var b := Game.place_building(placing, ghost_cell)
+	if b.is_empty():
+		_update_ghost()
+		return
+	if bool(Data.BUILDINGS[placing].get("deco", false)) and Game.can_afford(Data.BUILDINGS[placing]["cost"]):
+		# keep placing decorations; nudge the ghost along
+		ghost_cell += Vector2i(Data.BUILDINGS[placing]["size"].x, 0)
+		_update_ghost()
+	else:
+		cancel_place()
+
+
+func cancel_place() -> void:
+	placing = ""
+	if ghost:
+		ghost.visible = false
+	hud.update_placement("", "")
 
 
 # ================================================================ per-frame
+
+func _blocked(p: Vector2) -> bool:
+	var c := WorldMap.world_to_cell(p)
+	if not WorldMap.in_bounds(c) or c.x < 1 or c.y < 1 or c.x >= WorldMap.SIZE - 1 or c.y >= WorldMap.SIZE - 1:
+		return true
+	return Game.map.water.has(c) or occupied.has(c)
+
 
 func _process(delta: float) -> void:
 	var dir := Vector2.ZERO
@@ -219,169 +306,106 @@ func _process(delta: float) -> void:
 		dir += hud.joystick.value
 		dir += auto_dir
 	dir = dir.limit_length(1.0)
-
-	player.position += dir * SPEED * delta
-	var local := (player.position - CENTER) / RADII
-	if local.length() > WALK_LIMIT:
-		player.position = CENTER + local.normalized() * WALK_LIMIT * RADII
-	player.moving = dir.length() > 0.1
+	var mv := dir * SPEED * delta
+	if not _blocked(keeper.position + Vector2(mv.x, 0)):
+		keeper.position.x += mv.x
+	if not _blocked(keeper.position + Vector2(0, mv.y)):
+		keeper.position.y += mv.y
+	keeper.moving = dir.length() > 0.1
 	if absf(dir.x) > 0.1:
-		player.facing = signf(dir.x)
-	cam.position = player.position
+		keeper.facing = signf(dir.x)
+	cam.position = keeper.position
 
-	# companion follows a little behind
-	var target := player.position + Vector2(-player.facing * 62.0, 6.0)
-	var before := pet.position
-	pet.position = pet.position.lerp(target, 1.0 - exp(-delta * 6.0))
-	var moved := pet.position - before
-	pet.moving = moved.length() > 40.0 * delta
-	if absf(moved.x) > 0.5:
-		pet.facing = signf(moved.x)
-	elif not pet.moving:
-		pet.facing = player.facing
+	var e := Game.carried_egg()
+	keeper.egg_type = "" if e.is_empty() else str(e["type"])
+	keeper.egg_warm = Game.egg_ratio(e)
 
-	var e := Game.get_carried_egg()
-	player.egg_type = "" if e.is_empty() else str(e["type"])
-	player.egg_warm = Game.egg_ratio(e)
-	var cp := Game.get_companion()
-	pet.wish = "" if cp.is_empty() else str(cp["wish"])
-
-	if lantern_reset > 0.0:
-		lantern_reset -= delta
-		if lantern_reset <= 0.0:
-			lantern_lit = [false, false, false]
-	cooldown = maxf(0.0, cooldown - delta)
 	if modal:
 		hud.hide_action()
+		action_hold = false
 		return
-	_update_station(delta)
+	_update_action(delta)
 
 
-func _station_valid(st: Dictionary) -> bool:
-	match str(st["kind"]):
-		"mailbox":
-			return int(st["index"]) == mail_target
-		"lantern":
-			return not bool(lantern_lit[int(st["index"])])
-		"post":
-			return mail_target == -1
-	return true
-
-
-func _update_station(delta: float) -> void:
-	var found := -1
-	var best := INF
-	for i in stations.size():
-		var st: Dictionary = stations[i]
-		if not _station_valid(st):
-			continue
-		var d := player.position.distance_to(st["pos"])
-		if d < float(st["radius"]) and d < best:
-			best = d
-			found = i
-	if found != active:
-		active = found
-		progress = 0.0
-	if active == -1:
+func _update_action(delta: float) -> void:
+	action = _find_action()
+	if action.is_empty():
 		hud.hide_action()
+		action_hold = false
 		return
-	var cur: Dictionary = stations[active]
-	if str(cur["kind"]) == "kiosk":
-		hud.show_action("Open Egg Kiosk", hud.open_shop)
+	hud.show_action(str(action["label"]))
+	action_cd = maxf(0.0, action_cd - delta)
+	if action_hold and action_cd <= 0.0 and str(action["kind"]) != "open":
+		do_action()
+
+
+func _find_action() -> Dictionary:
+	var kc := WorldMap.world_to_cell(keeper.position)
+	for b in Game.buildings:
+		var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+		var r := Rect2i(b["cell"] - Vector2i(1, 1), size + Vector2i(2, 2))
+		if r.has_point(kc):
+			if not bool(b["built"]):
+				return {"kind": "build", "bid": b["id"], "label": "Help build"}
+	for b in Game.buildings:
+		var size2: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+		if bool(Data.BUILDINGS[b["type"]].get("deco", false)):
+			continue
+		var r2 := Rect2i(b["cell"] - Vector2i(1, 1), size2 + Vector2i(2, 2))
+		if r2.has_point(kc):
+			return {"kind": "open", "bid": b["id"], "label": "Open " + Data.BUILDINGS[b["type"]]["name"]}
+	var best := {}
+	var best_d := 92.0
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var c := kc + Vector2i(dx, dy)
+			var kind := ""
+			if Game.map.nodes.has(c):
+				kind = Game.map.nodes[c]
+			elif Game.map.water.has(c):
+				kind = "water"
+			if kind == "":
+				continue
+			var d := keeper.position.distance_to(WorldMap.cell_center(c) + Vector2(0, T * 0.35))
+			if kind == "water":
+				d = keeper.position.distance_to(WorldMap.cell_center(c)) - 20.0
+			if d < best_d:
+				best_d = d
+				var labels := {"tree": "Chop wood", "rock": "Mine stone", "bush": "Pick berries", "crystal": "Mine crystal", "water": "Catch fish"}
+				best = {"kind": "gather", "node": kind, "cell": c, "label": labels[kind]}
+	return best
+
+
+func action_down() -> void:
+	action_hold = true
+	if not action.is_empty() and (action_cd <= 0.0 or str(action["kind"]) == "open"):
+		do_action()
+
+
+func action_up() -> void:
+	action_hold = false
+
+
+func do_action() -> void:
+	if action.is_empty():
 		return
-	hud.hide_action()
-	if cooldown > 0.0:
-		return
-	progress += delta * Game.job_speed(str(cur["job"]))
-	if progress >= station_time(cur):
-		progress = 0.0
-		cooldown = 0.5
-		_complete(cur)
-
-
-func station_time(st: Dictionary) -> float:
-	match str(st["kind"]):
-		"post":
-			return 1.5
-		"mailbox":
-			return 0.8
-		"lantern":
-			return 1.0
-	if str(st["job"]) == "":
-		return 1.0
-	return float(Data.JOBS[str(st["job"])]["time"])
-
-
-func station_verb(st: Dictionary) -> String:
-	match str(st["kind"]):
-		"post":
-			return "Grabbing starmail..."
-		"mailbox":
-			return "Delivering..."
-		"lantern":
-			return "Lighting lantern..."
-	match str(st["job"]):
-		"nap": return "Napping... zzz"
-		"berries": return "Picking moonberries..."
-		"windmill": return "Winding the mill..."
-		"tidepool": return "Tidying the pool..."
-	return ""
-
-
-## Which job a station counts as for the companion's wish (the whole errand counts).
-func station_job_for_wish(st: Dictionary) -> String:
-	return str(st["job"])
-
-
-func _complete(st: Dictionary) -> void:
-	var p: Vector2 = st["pos"]
-	match str(st["kind"]):
-		"timed":
-			_reward(str(st["job"]), p)
-		"post":
-			mail_target = randi() % 4
-			overlay.float_text("Starmail!", p + Vector2(0, -120), Color("#ffd23f"))
-			hud.toast("Deliver the starmail to the glowing mailbox — follow the arrow!")
-		"mailbox":
-			mail_target = -1
-			_reward("starmail", p)
-		"lantern":
-			lantern_lit[int(st["index"])] = true
-			var lit := 0
-			for l in lantern_lit:
-				if l:
-					lit += 1
-			if lit >= 3:
-				lantern_reset = 4.0
-				_reward("lanterns", p)
-			else:
-				overlay.float_text("Lantern lit  %d / 3" % lit, p + Vector2(0, -170), Color("#ffd966"))
-
-
-func _reward(job_id: String, at: Vector2) -> void:
-	var r := Game.complete_job(job_id)
-	var y := at + Vector2(0, -110)
-	overlay.float_text("+%d glimmer" % int(r["glimmer"]), y, Color("#9fe6ff"))
-	var d := 0.25
-	if int(r["xp"]) > 0:
-		overlay.float_text("+%d xp" % int(r["xp"]), y + Vector2(0, -30), Color("#a6f0b4"), d)
-		d += 0.25
-	if int(r["warmth"]) > 0 and not bool(r["hatched"]):
-		overlay.float_text("+%d warmth" % int(r["warmth"]), y + Vector2(0, -60), Color("#ffc27a"), d)
-		d += 0.25
-	if bool(r["wish"]):
-		overlay.float_text("Wish granted!", y + Vector2(0, -90), Color("#ffb3cf"), d)
-
-
-func _refresh_pet() -> void:
-	var p := Game.get_companion()
-	if p.is_empty():
-		pet.species = ""
-		pet.visible = false
-		return
-	if not pet.visible:
-		pet.position = player.position + Vector2(-60, 0)
-	pet.visible = true
-	pet.species = str(p["species"])
-	pet.level = int(p["level"])
-	pet.prism = bool(p["prism"])
+	match str(action["kind"]):
+		"open":
+			action_hold = false
+			hud.open_building(int(action["bid"]))
+		"build":
+			action_cd_max = 0.35
+			action_cd = action_cd_max
+			var b := Game.find_building(int(action["bid"]))
+			if not b.is_empty():
+				Game.add_build_progress(b, 1.0)
+				overlay.float_text("+1 build", keeper.position + Vector2(0, -110), Color("#ffc27a"))
+				Game.changed.emit()
+		"gather":
+			var node: String = action["node"]
+			action_cd_max = 1.5 if node == "crystal" else (1.0 if node == "water" else 0.5)
+			action_cd = action_cd_max
+			var r := Game.keeper_gather(node)
+			if r != "":
+				overlay.float_text("+1 %s" % Data.RESOURCES[r]["name"].to_lower(), keeper.position + Vector2(0, -110),
+					Color(Data.RESOURCES[r]["color"]).lightened(0.35))
