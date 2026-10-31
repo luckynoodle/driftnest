@@ -55,11 +55,23 @@ scripts/hud.gd           all UI (built in code): resource bar, goals, Build menu
 scripts/building_view.gd procedural building art (+ construction + placement ghost)
 scripts/pet_actor.gd     pets walking to work / wandering
 scripts/pet_art.gd       procedural creatures, eggs and tool icons
-scripts/nature_prop.gd, terrain.gd, overlay.gd, player.gd, portrait.gd, joystick.gd
+scripts/nature_prop.gd, terrain.gd, ambient.gd, overlay.gd, player.gd, portrait.gd, joystick.gd
+shaders/                 ground, water and screen post-processing
+fonts/                   Nunito (OFL)
 tests/smoke.gd           automated play-through used by CI
 ```
 
-All art is drawn in code. To add a creature, add it to `SPECIES` (with `talents`) and `SPECIES_ORDER` in `data.gd`, then add it to an egg's `pool`. To add a building, add it to `BUILDINGS` + `BUILD_ORDER` and give it a drawing in `building_view.gd`.
+### Art style ("storybook 3D")
+
+Everything is still drawn in code, but in a 3/4 view with one light source from the top-left:
+
+- `pet_art.gd` is the shared toolkit: lit vertex-colour gradients, ink outlines, specular dots, rim light, soft contact and cast shadows. It also draws the creatures, eggs and tool icons. Animated things use fast triangle fans, so a pet costs well under 1 ms to draw.
+- `building_view.gd` draws buildings with a lit front wall, a shaded side wall and roofs seen from above. Its static body is redrawn only when something changes; smoke, flags, lamp glow, fountain spray and nest eggs sit on a small animated layer.
+- `shaders/ground.gdshader` paints the meadow. `shaders/water.gdshader` animates the sunken lake: depth colour, ripples, glints and shore foam. `shaders/post.gdshader` adds the miniature-model finish: tilt-shift blur at the top and bottom, a warm sun wash, a vignette and paper grain.
+- `ambient.gd` adds butterflies and drifting pollen. The UI font is Nunito (SIL Open Font License, `fonts/OFL.txt`).
+- `godot --path . -- --showcase` builds a busy town and saves screenshots. `godot --path . res://tests/gallery.tscn` renders every creature, egg and tool.
+
+To add a creature, add it to `SPECIES` (with `talents`) and `SPECIES_ORDER` in `data.gd`, then add it to an egg's `pool`. To add a building, add it to `BUILDINGS` + `BUILD_ORDER` and give it a drawing in `building_view.gd`.
 
 ## Web test build on GitHub Pages
 

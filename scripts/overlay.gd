@@ -65,14 +65,20 @@ func _draw() -> void:
 func _draw_border(strong: bool) -> void:
 	var c := WorldMap.CENTER * T
 	var r := Game.town_radius() * T
-	var n := 96
-	var col := Color(1, 1, 1, 0.75 if strong else 0.4)
+	var n := int(TAU * r / 46.0)
+	var cam_rect := get_viewport_transform().affine_inverse() * get_viewport_rect()
+	cam_rect = cam_rect.grow(40)
 	for i in n:
-		if i % 2 == 1:
+		var a := TAU * i / n
+		var p := c + Vector2(cos(a), sin(a)) * r
+		if not cam_rect.has_point(p):
 			continue
-		var a0 := TAU * i / n + t * 0.01
-		var a1 := TAU * (i + 1) / n + t * 0.01
-		draw_arc(c, r, a0, a1, 4, col, 5.0 if strong else 3.0, true)
+		if strong:
+			draw_circle(p, 6.0, PetArt.INK)
+			draw_circle(p, 4.2, Color("#fff3c4"))
+		else:
+			draw_circle(p + Vector2(1.5, 2.0), 3.6, Color(0.1, 0.2, 0.25, 0.18))
+			draw_circle(p, 3.2, Color(1.0, 0.97, 0.85, 0.55))
 
 
 func _draw_grid() -> void:

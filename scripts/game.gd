@@ -44,6 +44,9 @@ var _last_wall := 0.0
 
 
 func _ready() -> void:
+	var font: Font = load("res://fonts/Nunito-ExtraBold.woff2")
+	if font:
+		ThemeDB.fallback_font = font
 	rng.randomize()
 	if not load_game():
 		new_game()

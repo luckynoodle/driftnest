@@ -69,6 +69,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
+	PetArt.fast = true
 	var p := Game.find_pet(pid)
 	if p.is_empty():
 		return

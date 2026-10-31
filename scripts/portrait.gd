@@ -1,3 +1,4 @@
+class_name PortraitView
 extends Control
 ## Small animated picture used in HUD cards: a creature, an egg, a resource icon,
 ## a tool or a building preview.
@@ -45,6 +46,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
+	PetArt.fast = true
 	var c := size / 2.0
 	var m := minf(size.x, size.y)
 	match mode:
@@ -65,40 +67,40 @@ func _draw() -> void:
 
 
 static func draw_res(ci: CanvasItem, c: Vector2, r_name: String, r: float, t: float = 0.0) -> void:
+	PetArt.fast = true
 	var id := Transform2D.IDENTITY
+	var ow := clampf(r * 0.16, 1.2, 2.6)
 	match r_name:
 		"glimmer":
-			var pts := PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.8, -r * 0.2), c + Vector2(0, r), c + Vector2(-r * 0.8, -r * 0.2)])
-			ci.draw_colored_polygon(pts, Color("#7fd6ff"))
-			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.8, -r * 0.2), c + Vector2(0, -r * 0.05)]), Color("#c8f0ff"))
-			ci.draw_circle(c + Vector2(-r * 0.25, -r * 0.35), r * 0.12 * (1.0 + 0.5 * sin(t * 3.0)), Color(1, 1, 1, 0.9))
+			PetArt.shape(ci, id, [c + Vector2(0, -r), c + Vector2(r * 0.82, -r * 0.18), c + Vector2(0, r), c + Vector2(-r * 0.82, -r * 0.18)], Color("#6fcaf5"), ow)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0, -r * 0.85), c + Vector2(r * 0.66, -r * 0.18), c + Vector2(0, -r * 0.1)]), Color("#d4f3ff"))
+			PetArt.sparkle(ci, c + Vector2(-r * 0.3, -r * 0.35), r * 0.3 * (0.8 + 0.3 * sin(t * 3.0)), Color(1, 1, 1, 0.95))
 		"wood":
-			ci.draw_rect(Rect2(c + Vector2(-r, -r * 0.45), Vector2(r * 1.6, r * 0.9)), Color("#a8794f"))
-			ci.draw_circle(c + Vector2(r * 0.6, 0), r * 0.45, Color("#e8c99a"))
-			ci.draw_arc(c + Vector2(r * 0.6, 0), r * 0.25, 0, TAU, 12, Color("#c09a6b"), 1.5, true)
+			PetArt.shape(ci, id, [c + Vector2(-r, -r * 0.45), c + Vector2(r * 0.6, -r * 0.45), c + Vector2(r * 0.6, r * 0.45), c + Vector2(-r, r * 0.45)], Color("#b07a45"), ow)
+			PetArt.blob(ci, id, c + Vector2(r * 0.6, 0), Vector2(r * 0.42, r * 0.5), Color("#f0d3a4"), 0.0, ow, false)
+			ci.draw_arc(c + Vector2(r * 0.6, 0), r * 0.22, 0, TAU, 12, Color("#c09a6b"), 1.5, true)
 		"stone":
-			PetArt.ell(ci, id, c + Vector2(0, r * 0.1), Vector2(r * 0.95, r * 0.7), Color("#9aa3ad"))
-			PetArt.ell(ci, id, c + Vector2(-r * 0.25, -r * 0.2), Vector2(r * 0.4, r * 0.22), Color("#c2c9d0"))
+			PetArt.blob(ci, id, c + Vector2(0, r * 0.1), Vector2(r * 0.95, r * 0.72), Color("#b4bdc6"), 0.0, ow, true, 1.3)
 		"berries":
-			for q in [Vector2(-0.4, 0.2), Vector2(0.35, 0.25), Vector2(0, -0.35)]:
-				ci.draw_circle(c + q * r, r * 0.42, Color("#6b5cff"))
-				ci.draw_circle(c + q * r + Vector2(-r * 0.12, -r * 0.12), r * 0.12, Color(1, 1, 1, 0.8))
-			ci.draw_line(c + Vector2(0, -r * 0.7), c + Vector2(r * 0.3, -r * 1.0), Color("#5aa64a"), 2.0)
+			ci.draw_line(c + Vector2(0, -r * 0.6), c + Vector2(r * 0.35, -r * 1.0), Color("#3f8f3a"), 2.5, true)
+			for q in [Vector2(-0.42, 0.22), Vector2(0.38, 0.26), Vector2(0, -0.32)]:
+				PetArt.blob(ci, id, c + q * r, Vector2(r * 0.42, r * 0.42), Color("#5b4cf0"), 0.0, ow * 0.8, true)
 		"fish":
-			PetArt.ell(ci, id, c + Vector2(-r * 0.1, 0), Vector2(r * 0.75, r * 0.45), Color("#4fb6dd"))
-			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.55, 0), c + Vector2(r, -r * 0.45), c + Vector2(r, r * 0.45)]), Color("#3f9fcb"))
-			ci.draw_circle(c + Vector2(-r * 0.5, -r * 0.1), r * 0.1, Color("#2b2230"))
+			PetArt.shape(ci, id, [c + Vector2(r * 0.5, 0), c + Vector2(r, -r * 0.48), c + Vector2(r, r * 0.48)], Color("#3f9fcb"), ow)
+			PetArt.blob(ci, id, c + Vector2(-r * 0.12, 0), Vector2(r * 0.76, r * 0.46), Color("#4fb6dd"), 0.0, ow, true)
+			ci.draw_circle(c + Vector2(-r * 0.5, -r * 0.1), r * 0.11, PetArt.INK)
 		"crystal":
-			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.4, r * 0.8), c + Vector2(0, -r), c + Vector2(r * 0.4, r * 0.8)]), Color("#c58cff"))
-			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.4, r * 0.8), c + Vector2(r * 0.05, r * 0.8)]), Color("#e0c2ff"))
+			PetArt.outline(ci, PackedVector2Array([c + Vector2(-r * 0.45, r * 0.8), c + Vector2(0, -r), c + Vector2(r * 0.45, r * 0.8)]), ow)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.45, r * 0.8), c + Vector2(0, -r), c + Vector2(r * 0.02, r * 0.8)]), Color("#e0c2ff"))
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.02, r * 0.8), c + Vector2(0, -r), c + Vector2(r * 0.45, r * 0.8)]), Color("#b07ef0"))
 		"pets":
-			ci.draw_circle(c + Vector2(0, r * 0.25), r * 0.45, Color("#ff8a65"))
-			for q in [Vector2(-0.55, -0.25), Vector2(-0.2, -0.65), Vector2(0.2, -0.65), Vector2(0.55, -0.25)]:
-				ci.draw_circle(c + q * r, r * 0.2, Color("#ff8a65"))
+			PetArt.blob(ci, id, c + Vector2(0, r * 0.28), Vector2(r * 0.48, r * 0.42), Color("#ff8a65"), 0.0, ow, false)
+			for q in [Vector2(-0.58, -0.22), Vector2(-0.2, -0.62), Vector2(0.2, -0.62), Vector2(0.58, -0.22)]:
+				PetArt.blob(ci, id, c + q * r, Vector2(r * 0.21, r * 0.23), Color("#ff8a65"), 0.0, ow * 0.8, false)
 		"charm":
-			var pts2 := PackedVector2Array()
+			var pts2: Array = []
 			for i in 10:
 				var a := -PI / 2.0 + TAU * i / 10.0
-				var rr := r if i % 2 == 0 else r * 0.45
+				var rr := r if i % 2 == 0 else r * 0.48
 				pts2.append(c + Vector2(cos(a), sin(a)) * rr)
-			ci.draw_colored_polygon(pts2, Color("#ffd23f"))
+			PetArt.shape(ci, id, pts2, Color("#ffd23f"), ow)

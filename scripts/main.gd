@@ -37,11 +37,10 @@ var auto_dir := Vector2.ZERO
 
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color(Color("#5f9e4a"))
+	RenderingServer.set_default_clear_color(Color("#6aa84f"))
 
 	var terrain: Node2D = TerrainScript.new()
 	terrain.map = Game.map
-	terrain.z_index = -10
 	add_child(terrain)
 
 	ysort = Node2D.new()
@@ -77,6 +76,22 @@ func _ready() -> void:
 	cam.make_current()
 	_apply_zoom()
 
+	var amb := Ambient.new()
+	amb.cam = cam
+	add_child(amb)
+
+	# storybook miniature finish (tilt-shift, sun wash, vignette, grain); HUD sits above it
+	var post_layer := CanvasLayer.new()
+	post_layer.layer = 2
+	var post := ColorRect.new()
+	post.set_anchors_preset(Control.PRESET_FULL_RECT)
+	post.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pm := ShaderMaterial.new()
+	pm.shader = load("res://shaders/post.gdshader")
+	post.material = pm
+	post_layer.add_child(post)
+	add_child(post_layer)
+
 	hud = GameHud.new()
 	hud.main = self
 	add_child(hud)
@@ -86,6 +101,10 @@ func _ready() -> void:
 	Game.produced.connect(_on_produced)
 	_sync()
 
+	if "--showcase" in OS.get_cmdline_user_args():
+		var show = load("res://tests/showcase.gd").new()
+		show.main = self
+		add_child(show)
 	if "--smoke" in OS.get_cmdline_user_args():
 		var smoke = load("res://tests/smoke.gd").new()
 		smoke.main = self
