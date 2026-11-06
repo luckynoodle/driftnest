@@ -46,15 +46,25 @@ var _hatch_queue: Array = []
 var _confirm_demolish := -1
 var _refresh_t := 0.0
 
+## HUD layout: the root is scaled so buttons stay finger-sized on phones (about 44 points),
+## and inset by the notch / home-bar safe area on native iOS.
+var ui_scale := 1.0
+var compact := false
+var left_col: VBoxContainer
+var chip_flow: HFlowContainer
+var menu_box: VBoxContainer
+var fps_label: Label
+
 
 func _ready() -> void:
 	layer = 5
 	theme_res = _build_theme()
 	root = Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = theme_res
 	add_child(root)
+	_layout()
+	get_viewport().size_changed.connect(_layout)
 
 	_build_topbar()
 	_build_cards()
@@ -71,9 +81,13 @@ func _ready() -> void:
 	Game.skill_up.connect(func(p, job): toast("%s's %s skill is now %d." % [Game.pet_name(p), Data.JOBS[job]["name"], int(Game.skill(p, job)["lvl"])]))
 	Game.goal_done.connect(_on_goal_done)
 	Game.welcome_back.connect(_on_welcome_back)
+	Game.settings_changed.connect(_layout)
 	refresh()
+	_layout()
 	if Game.first_run:
 		open_help.call_deferred()
+	elif Game.migration_note != "":
+		_show_migration.call_deferred()
 	elif not Game.offline_report.is_empty():
 		_show_welcome.call_deferred()
 	for h in Game.take_pending_hatches():
@@ -81,6 +95,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if fps_label and fps_label.visible:
+		fps_label.text = "%d fps" % Engine.get_frames_per_second()
 	# live-update open panels a few times a second (progress bars, worker output)
 	_refresh_t += delta
 	if _refresh_t > 0.5:
@@ -259,83 +275,157 @@ func _section(text: String) -> Label:
 	return _label(text, 22, TEXT)
 
 
+# ================================================================ layout & scaling
+
+## How many points (iOS logical pixels) one viewport pixel covers on this screen.
+func _points_per_px() -> float:
+	var vp := get_viewport().get_visible_rect().size
+	var short_vp := minf(vp.x, vp.y)
+	if short_vp <= 0.0:
+		return 1.0
+	var short_pts := 0.0
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--pts="): # testing: pretend to be a device this many points tall
+			return float(arg.substr(6)) / short_vp
+	if OS.has_feature("web"):
+		var v = JavaScriptBridge.eval("Math.min(window.innerWidth, window.innerHeight)")
+		short_pts = float(v) if v != null else 0.0
+	if short_pts <= 0.0:
+		var win := DisplayServer.window_get_size()
+		var sc := maxf(DisplayServer.screen_get_scale(), 1.0)
+		short_pts = minf(win.x, win.y) / sc
+	return short_pts / short_vp
+
+
+func _safe_margins() -> Array:
+	## [left, top, right, bottom] in viewport pixels (only on phones/tablets running natively).
+	if not OS.has_feature("mobile"):
+		return [0.0, 0.0, 0.0, 0.0]
+	var win := Vector2(DisplayServer.window_get_size())
+	var safe := DisplayServer.get_display_safe_area()
+	var vp := get_viewport().get_visible_rect().size
+	if win.x <= 0 or win.y <= 0 or safe.size.x <= 0:
+		return [0.0, 0.0, 0.0, 0.0]
+	var k := vp / win
+	return [safe.position.x * k.x, safe.position.y * k.y,
+		(win.x - safe.end.x) * k.x, (win.y - safe.end.y) * k.y]
+
+
+func _layout() -> void:
+	if root == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var ratio := _points_per_px()
+	var mult: float = {"small": 0.85, "auto": 1.0, "large": 1.18}.get(Game.settings.get("ui_size", "auto"), 1.0)
+	ui_scale = clampf(0.92 / maxf(ratio, 0.05), 1.0, 1.75) * mult
+	ui_scale = maxf(ui_scale, 0.8)
+	var m := _safe_margins()
+	root.position = Vector2(m[0], m[1])
+	root.scale = Vector2(ui_scale, ui_scale)
+	root.size = (vp - Vector2(m[0] + m[2], m[1] + m[3])) / ui_scale
+	compact = root.size.y < 560.0
+	if left_col:
+		var avail := root.size.x - 170.0
+		left_col.custom_minimum_size = Vector2(avail, 0)
+		left_col.size = Vector2(avail, 0)
+		chip_flow.custom_minimum_size = Vector2(avail, 0)
+	if joystick:
+		var js := 180.0 if compact else 220.0
+		joystick.offset_left = 20
+		joystick.offset_right = 20 + js
+		joystick.offset_top = -js - 20
+		joystick.offset_bottom = -20
+		joystick.queue_redraw()
+	if fps_label:
+		fps_label.visible = bool(Game.settings.get("show_fps", false))
+	if modal and _modal_kind != "" and _modal_kind != "hatch" and _modal_kind != "welcome":
+		_reopen.call_deferred()
+
+
 # ================================================================ always-on HUD
 
 func _build_topbar() -> void:
-	var bar := HBoxContainer.new()
-	bar.position = Vector2(12, 10)
-	bar.add_theme_constant_override("separation", 6)
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(bar)
+	left_col = _vbox(8)
+	left_col.position = Vector2(12, 10)
+	left_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(left_col)
+	chip_flow = HFlowContainer.new()
+	chip_flow.add_theme_constant_override("h_separation", 6)
+	chip_flow.add_theme_constant_override("v_separation", 6)
+	chip_flow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_col.add_child(chip_flow)
 	for r in ["glimmer"] + Data.RES_ORDER + ["pets", "charm"]:
 		var chip := PanelContainer.new()
 		chip.add_theme_stylebox_override("panel", _card_style())
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var h := _hbox(4)
-		h.add_child(_res_icon(r, 24))
-		var l := _label("0", 19)
-		l.custom_minimum_size = Vector2(34, 0)
+		h.add_child(_res_icon(r, 22))
+		var l := _label("0", 18)
+		l.custom_minimum_size = Vector2(30, 0)
 		h.add_child(l)
 		chip.add_child(h)
-		bar.add_child(chip)
+		chip_flow.add_child(chip)
 		res_labels[r] = l
 
 
 func _build_cards() -> void:
-	var col := _vbox(8)
-	col.position = Vector2(12, 64)
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(col)
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_col.add_child(row)
 
 	goal_panel = PanelContainer.new()
 	goal_panel.add_theme_stylebox_override("panel", _card_style())
-	goal_panel.custom_minimum_size = Vector2(330, 0)
+	goal_panel.custom_minimum_size = Vector2(300, 0)
 	goal_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gv := _vbox(2)
-	gv.add_child(_label("Goal", 15, Color("#c27c2c")))
-	goal_label = _label("", 17)
+	var gv := _vbox(1)
+	gv.add_child(_label("Goal", 14, Color("#c27c2c")))
+	goal_label = _label("", 16)
 	goal_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	goal_label.custom_minimum_size = Vector2(310, 0)
+	goal_label.custom_minimum_size = Vector2(280, 0)
 	gv.add_child(goal_label)
-	goal_reward = _label("", 14, SUBTLE)
+	goal_reward = _label("", 13, SUBTLE)
 	gv.add_child(goal_reward)
 	goal_panel.add_child(gv)
-	col.add_child(goal_panel)
+	row.add_child(goal_panel)
 
 	var ep := PanelContainer.new()
 	ep.add_theme_stylebox_override("panel", _card_style())
 	ep.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ep.custom_minimum_size = Vector2(330, 0)
+	ep.custom_minimum_size = Vector2(250, 0)
+	ep.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	var eh := _hbox(8)
-	egg_portrait = _portrait("egg", Vector2(46, 52))
+	egg_portrait = _portrait("egg", Vector2(40, 46))
 	eh.add_child(egg_portrait)
-	var ev := _vbox(3)
+	var ev := _vbox(2)
 	ev.alignment = BoxContainer.ALIGNMENT_CENTER
-	egg_name = _label("", 17)
-	egg_bar = _bar(Color("#ffb347"), 200, 12)
-	egg_info = _label("", 14, SUBTLE)
+	egg_name = _label("", 16)
+	egg_bar = _bar(Color("#ffb347"), 170, 11)
+	egg_info = _label("", 13, SUBTLE)
 	ev.add_child(egg_name)
 	ev.add_child(egg_bar)
 	ev.add_child(egg_info)
 	eh.add_child(ev)
 	ep.add_child(eh)
-	col.add_child(ep)
+	row.add_child(ep)
 
 
 func _build_menu_buttons() -> void:
-	var box := _vbox(10)
+	var box := _vbox(8)
+	menu_box = box
 	box.anchor_left = 1.0
 	box.anchor_right = 1.0
-	box.offset_left = -140
-	box.offset_right = -14
-	box.offset_top = 12
-	box.offset_bottom = 330
+	box.offset_left = -144
+	box.offset_right = -12
+	box.offset_top = 10
+	box.offset_bottom = 300
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(box)
-	box.add_child(_button("Build", open_build, 22))
-	box.add_child(_button("Pets", open_pets, 22))
-	box.add_child(_button("Eggs", open_eggs, 22))
-	box.add_child(_button("Help", open_help, 22))
+	for pair in [["Build", open_build], ["Pets", open_pets], ["Eggs", open_eggs], ["Settings", open_settings]]:
+		var b := _button(pair[0], pair[1], 20)
+		b.custom_minimum_size = Vector2(0, 46)
+		box.add_child(b)
 	var zoom := _hbox(8)
 	var zin := _small_button("+", func(): main.zoom_by(1.15), Color("#7a9cc6"))
 	var zout := _small_button("-", func(): main.zoom_by(1.0 / 1.15), Color("#7a9cc6"))
@@ -346,6 +436,11 @@ func _build_menu_buttons() -> void:
 	zoom.add_child(zout)
 	zoom.add_child(zin)
 	box.add_child(zoom)
+	fps_label = _label("", 15, Color.WHITE)
+	fps_label.add_theme_color_override("font_outline_color", Color("#3b2a2a"))
+	fps_label.add_theme_constant_override("outline_size", 6)
+	fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	box.add_child(fps_label)
 
 
 func _build_action() -> void:
@@ -356,10 +451,10 @@ func _build_action() -> void:
 	action_btn.anchor_right = 1.0
 	action_btn.anchor_top = 1.0
 	action_btn.anchor_bottom = 1.0
-	action_btn.offset_left = -330
-	action_btn.offset_right = -24
-	action_btn.offset_top = -100
-	action_btn.offset_bottom = -26
+	action_btn.offset_left = -300
+	action_btn.offset_right = -20
+	action_btn.offset_top = -92
+	action_btn.offset_bottom = -20
 	action_btn.visible = false
 	action_btn.button_down.connect(func(): main.action_down())
 	action_btn.button_up.connect(func(): main.action_up())
@@ -542,13 +637,13 @@ func _open_window(title: String, w: float, h: float, closable: bool = true, kind
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.add_child(cc)
 	var panel := PanelContainer.new()
-	var vp := root.get_viewport_rect().size
-	panel.custom_minimum_size = Vector2(minf(w, vp.x - 24.0), minf(h, vp.y - 24.0))
+	var vp := root.size
+	panel.custom_minimum_size = Vector2(minf(w, vp.x - 16.0), minf(h, vp.y - 16.0))
 	cc.add_child(panel)
 	var vb := _vbox(10)
 	panel.add_child(vb)
 	var header := _hbox(10)
-	var tl := _label(title, 28)
+	var tl := _label(title, 24 if compact else 28)
 	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(tl)
 	if closable:
@@ -587,7 +682,7 @@ func open_build() -> void:
 	vb.add_child(_wrap("Pick a building, then tap the ground to place it inside the town border. Pets with a hammer at the Builder's Hut put it up. You can help by standing next to it.", 16))
 	var list := _scroll(vb)
 	var grid := GridContainer.new()
-	grid.columns = 3
+	grid.columns = clampi(int((minf(980.0, root.size.x - 16.0) - 40.0) / 290.0), 1, 3)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
@@ -604,7 +699,7 @@ func open_build() -> void:
 		var v := _vbox(3)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.add_child(_label(str(info["name"]), 19))
-		v.add_child(_cost_row(info["cost"], 14))
+		v.add_child(_cost_row(Game.build_cost(type), 14))
 		var d := _wrap(str(info["desc"]), 13)
 		d.custom_minimum_size = Vector2(160, 0)
 		v.add_child(d)
@@ -612,7 +707,7 @@ func open_build() -> void:
 			v.add_child(_label("Town Hall Lv %d" % int(info["th"]), 15, BAD))
 		else:
 			var b := _small_button("Place", func(): close_modal(); main.start_placing(type), Color("#5aa64a"))
-			b.disabled = not Game.can_afford(info["cost"])
+			b.disabled = not Game.can_afford(Game.build_cost(type))
 			b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 			v.add_child(b)
 		h.add_child(v)
@@ -916,17 +1011,18 @@ func _workshop_panel(body: VBoxContainer) -> void:
 
 func _market_panel(body: VBoxContainer) -> void:
 	body.add_child(_section("Sell resources"))
+	body.add_child(_wrap("The Market buys in lots of 10.", 15))
 	for r in Data.RES_ORDER:
 		var row := _hbox(10)
 		row.add_child(_res_icon(r, 30))
-		var l := _label("%s  ·  you have %d  ·  %d glimmer each" % [Data.RESOURCES[r]["name"], int(Game.res[r]), int(Data.RESOURCES[r]["sell"])], 17)
+		var l := _label("%s  ·  you have %d  ·  %d glimmer per 10" % [Data.RESOURCES[r]["name"], int(Game.res[r]), int(Data.RESOURCES[r]["sell10"])], 17)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
 		var s10 := _small_button("Sell 10", func(): Game.sell(r, 10); _reopen())
 		s10.disabled = int(Game.res[r]) < 10
 		row.add_child(s10)
 		var sall := _small_button("Sell half", func(): Game.sell(r, int(Game.res[r]) / 2); _reopen())
-		sall.disabled = int(Game.res[r]) < 2
+		sall.disabled = int(Game.res[r]) < 20
 		row.add_child(sall)
 		body.add_child(row)
 
@@ -968,13 +1064,13 @@ func open_pets() -> void:
 	grid.add_theme_constant_override("v_separation", 10)
 	body.add_child(grid)
 	if _pets_tab == "mine":
-		grid.columns = 4
+		grid.columns = clampi(int((minf(980.0, root.size.x - 16.0) - 40.0) / 200.0), 2, 4)
 		if Game.pets.is_empty():
 			body.add_child(_label("No pets yet. Carry your egg until it hatches!", 18, SUBTLE))
 		for p in Game.pets:
 			grid.add_child(_pet_card(p))
 	else:
-		grid.columns = 5
+		grid.columns = clampi(int((minf(980.0, root.size.x - 16.0) - 40.0) / 165.0), 3, 5)
 		for sid in Data.SPECIES_ORDER:
 			grid.add_child(_log_card(sid))
 
@@ -1055,8 +1151,8 @@ func open_pet(pid: int) -> void:
 
 	# left: portrait, level, feeding
 	var left := _vbox(6)
-	left.custom_minimum_size = Vector2(260, 0)
-	left.add_child(_pet_pic(p, Vector2(260, 190)))
+	left.custom_minimum_size = Vector2(230 if compact else 260, 0)
+	left.add_child(_pet_pic(p, Vector2(230, 110) if compact else Vector2(260, 190)))
 	var sp: Dictionary = Data.SPECIES[p["species"]]
 	var rar: Dictionary = Data.RARITY[sp["rarity"]]
 	left.add_child(_label("%s  ·  %s" % [rar["name"], "Mythical" if bool(sp["mythic"]) else "Real animal"], 16, Color(rar["color"])))
@@ -1199,6 +1295,84 @@ func open_eggs() -> void:
 	for loc in ["carry", "nest", "bag"]:
 		for e in Game.eggs_at(loc):
 			body.add_child(_egg_card(e))
+
+
+# ---------------------------------------------------------------- settings
+
+func _toggle_row(body: VBoxContainer, label: String, note: String, key: String) -> void:
+	var row := _hbox(10)
+	var v := _vbox(0)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_label(label, 18))
+	if note != "":
+		v.add_child(_wrap(note, 14))
+	row.add_child(v)
+	var on := bool(Game.settings.get(key, false))
+	var b := _small_button("On" if on else "Off", func(): Game.set_setting(key, not on); open_settings(), Color("#5aa64a") if on else Color("#a39486"))
+	b.custom_minimum_size = Vector2(78, 44)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(b)
+	body.add_child(row)
+
+
+func open_settings() -> void:
+	var vb := _open_window("Settings", 720, 600, true, "settings")
+	var body := _scroll(vb)
+	body.add_child(_section("Graphics"))
+	_toggle_row(body, "Visual effects", "Edge blur, sunlight and vignette. Turn off if the game feels slow.", "effects")
+	_toggle_row(body, "Butterflies and pollen", "", "ambient")
+	_toggle_row(body, "Show frame rate", "A counter under the menu buttons, for testing.", "show_fps")
+	var size_row := _hbox(8)
+	var sl := _label("Button size", 18)
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_row.add_child(sl)
+	for pair in [["Smaller", "small"], ["Auto", "auto"], ["Larger", "large"]]:
+		var key: String = pair[1]
+		var cur: bool = Game.settings.get("ui_size", "auto") == key
+		var b := _small_button(pair[0], func(): Game.set_setting("ui_size", key), Color("#5aa64a") if cur else Color("#a39486"))
+		b.custom_minimum_size = Vector2(0, 44)
+		size_row.add_child(b)
+	body.add_child(size_row)
+	body.add_child(_section("Help"))
+	var hb := _hbox(8)
+	var help := _small_button("How to play", open_help, Color("#7a9cc6"))
+	help.custom_minimum_size = Vector2(0, 44)
+	hb.add_child(help)
+	if Data.FEEDBACK_URL != "":
+		var fb := _small_button("Send feedback", func(): OS.shell_open(Data.FEEDBACK_URL), Color("#7a9cc6"))
+		fb.custom_minimum_size = Vector2(0, 44)
+		hb.add_child(fb)
+	body.add_child(hb)
+	body.add_child(_section("Your town"))
+	var txt := "Tap again to delete your town" if _confirm_demolish == -99 else "Start a new town"
+	var reset := _small_button(txt, _reset_town, Color("#c96a5a"))
+	reset.custom_minimum_size = Vector2(0, 44)
+	reset.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	body.add_child(reset)
+	body.add_child(_label(Game.version_text(), 13, SUBTLE))
+
+
+func _reset_town() -> void:
+	if _confirm_demolish != -99:
+		_confirm_demolish = -99
+		open_settings()
+		return
+	_confirm_demolish = -1
+	close_modal()
+	Game.reset_save()
+	main.reset_view()
+	open_help.call_deferred()
+
+
+func _show_migration() -> void:
+	if modal:
+		return
+	var vb := _open_window("Welcome to the new Driftnest", 600, 360, false, "welcome")
+	vb.add_child(_wrap(Game.migration_note, 18, TEXT))
+	var ok := _button("Let's see!", close_modal, 22)
+	ok.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	vb.add_child(ok)
+	Game.migration_note = ""
 
 
 # ---------------------------------------------------------------- help

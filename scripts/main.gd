@@ -27,10 +27,18 @@ var action_cd := 0.0
 var action_cd_max := 0.45
 
 var zoom_level := 0.85
+var ambient: Ambient
+var post_layer: CanvasLayer
 var _touches: Dictionary = {}
 var _pinch_start := 0.0
 var _pinch_zoom := 1.0
 var _tap_start: Dictionary = {}
+var _panning := false
+
+## Tap-to-walk target (INF = none) and whether the camera has been dragged away from the Keeper.
+var walk_target := Vector2.INF
+var cam_free := false
+const PAN_THRESHOLD := 24.0
 
 # test hook: scripted input used by the automated smoke test
 var auto_dir := Vector2.ZERO
@@ -76,12 +84,12 @@ func _ready() -> void:
 	cam.make_current()
 	_apply_zoom()
 
-	var amb := Ambient.new()
-	amb.cam = cam
-	add_child(amb)
+	ambient = Ambient.new()
+	ambient.cam = cam
+	add_child(ambient)
 
 	# storybook miniature finish (tilt-shift, sun wash, vignette, grain); HUD sits above it
-	var post_layer := CanvasLayer.new()
+	post_layer = CanvasLayer.new()
 	post_layer.layer = 2
 	var post := ColorRect.new()
 	post.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -97,10 +105,16 @@ func _ready() -> void:
 	add_child(hud)
 
 	Game.changed.connect(_sync)
+	Game.settings_changed.connect(_apply_settings)
+	_apply_settings()
 	Game.building_done.connect(func(_b): _sync())
 	Game.produced.connect(_on_produced)
 	_sync()
 
+	if "--balance" in OS.get_cmdline_user_args():
+		var bal = load("res://tests/balance.gd").new()
+		bal.main = self
+		add_child(bal)
 	if "--showcase" in OS.get_cmdline_user_args():
 		var show = load("res://tests/showcase.gd").new()
 		show.main = self
@@ -152,6 +166,21 @@ func _sync() -> void:
 		if not pseen.has(pid):
 			pet_nodes[pid].queue_free()
 			pet_nodes.erase(pid)
+
+
+func _apply_settings() -> void:
+	post_layer.visible = bool(Game.settings.get("effects", true))
+	ambient.visible = bool(Game.settings.get("ambient", true))
+	ambient.set_process(ambient.visible)
+
+
+## Back to the start after a reset: Keeper at the plaza, camera on them.
+func reset_view() -> void:
+	walk_target = Vector2.INF
+	cam_free = false
+	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
+	_sync()
+	snap_camera()
 
 
 func _nest_id() -> int:
@@ -206,19 +235,47 @@ func _unhandled_input(event: InputEvent) -> void:
 				var v: Array = _touches.values()
 				_pinch_start = (v[0] as Vector2).distance_to(v[1])
 				_pinch_zoom = zoom_level
+				_panning = false
 		else:
 			var start: Vector2 = _tap_start.get(event.index, event.position)
 			var was_pinch := _touches.size() >= 2
 			_touches.erase(event.index)
 			_tap_start.erase(event.index)
-			if not was_pinch and start.distance_to(event.position) < 24.0:
-				tap_world(screen_to_world(event.position))
+			if _touches.is_empty():
+				var was_pan := _panning
+				_panning = false
+				if not was_pinch and not was_pan and start.distance_to(event.position) < PAN_THRESHOLD:
+					tap_world(screen_to_world(event.position))
 	elif event is InputEventScreenDrag:
 		_touches[event.index] = event.position
 		if _touches.size() == 2 and _pinch_start > 0.0:
 			var v2: Array = _touches.values()
 			zoom_level = _pinch_zoom * (v2[0] as Vector2).distance_to(v2[1]) / _pinch_start
 			_apply_zoom()
+		elif _touches.size() == 1:
+			# one finger dragging on the ground pans the camera
+			var start2: Vector2 = _tap_start.get(event.index, event.position)
+			if _panning or start2.distance_to(event.position) >= PAN_THRESHOLD:
+				_panning = true
+				pan_camera(-event.relative / zoom_level)
+
+
+## Move the camera without moving the Keeper (drag to look around).
+func pan_camera(world_delta: Vector2) -> void:
+	if not cam_free:
+		cam_free = true
+		cam.position = keeper.position
+	var full := WorldMap.SIZE * T
+	cam.position = (cam.position + world_delta).clamp(Vector2.ZERO, Vector2(full, full))
+
+
+## Walk the Keeper towards a point (tap to walk). The camera follows again.
+func walk_to(p: Vector2) -> void:
+	if Game.map.water.has(WorldMap.world_to_cell(p)):
+		return
+	walk_target = p
+	cam_free = false
+	overlay.mark_target(p)
 
 
 func tap_world(p: Vector2) -> void:
@@ -246,6 +303,7 @@ func tap_world(p: Vector2) -> void:
 		if r.has_point(p):
 			hud.open_building(int(b["id"]))
 			return
+	walk_to(p)
 
 
 # ================================================================ placement
@@ -288,7 +346,7 @@ func confirm_place() -> void:
 	if b.is_empty():
 		_update_ghost()
 		return
-	if bool(Data.BUILDINGS[placing].get("deco", false)) and Game.can_afford(Data.BUILDINGS[placing]["cost"]):
+	if bool(Data.BUILDINGS[placing].get("deco", false)) and Game.can_afford(Game.build_cost(placing)):
 		# keep placing decorations; nudge the ghost along
 		ghost_cell += Vector2i(Data.BUILDINGS[placing]["size"].x, 0)
 		_update_ghost()
@@ -324,16 +382,30 @@ func _process(delta: float) -> void:
 		if Input.is_physical_key_pressed(KEY_S): dir.y += 1.0
 		dir += hud.joystick.value
 		dir += auto_dir
+	if dir.length() > 0.1:
+		# manual control cancels tap-to-walk and brings the camera back
+		walk_target = Vector2.INF
+		cam_free = false
+	elif walk_target != Vector2.INF and not modal:
+		var to := walk_target - keeper.position
+		if to.length() < 10.0:
+			walk_target = Vector2.INF
+		else:
+			dir = to.normalized()
 	dir = dir.limit_length(1.0)
 	var mv := dir * SPEED * delta
+	var before := keeper.position
 	if not _blocked(keeper.position + Vector2(mv.x, 0)):
 		keeper.position.x += mv.x
 	if not _blocked(keeper.position + Vector2(0, mv.y)):
 		keeper.position.y += mv.y
-	keeper.moving = dir.length() > 0.1
+	if walk_target != Vector2.INF and dir.length() > 0.1 and keeper.position.distance_to(before) < mv.length() * 0.2:
+		walk_target = Vector2.INF # bumped into something
+	keeper.moving = keeper.position.distance_to(before) > 0.01
 	if absf(dir.x) > 0.1:
 		keeper.facing = signf(dir.x)
-	cam.position = keeper.position
+	if not cam_free:
+		cam.position = keeper.position
 
 	var e := Game.carried_egg()
 	keeper.egg_type = "" if e.is_empty() else str(e["type"])

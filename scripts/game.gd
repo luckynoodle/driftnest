@@ -13,6 +13,7 @@ signal building_done(building: Dictionary)
 signal goal_done(index: int)
 signal egg_found(egg: Dictionary)
 signal welcome_back(report: Dictionary)
+signal settings_changed
 
 const SAVE_PATH := "user://driftnest_save.json"
 const SAVE_VERSION := 2
@@ -43,7 +44,42 @@ var _pending_hatches: Array = []
 var _last_wall := 0.0
 
 
+## Per-device preferences (not part of the town save).
+const SETTINGS_PATH := "user://settings.cfg"
+var settings := {"effects": true, "ambient": true, "show_fps": false, "ui_size": "auto"}
+var build_info := {}
+
+
+func _load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS_PATH) == OK:
+		for k in settings.keys():
+			settings[k] = cf.get_value("settings", k, settings[k])
+	if FileAccess.file_exists("res://build_info.json"):
+		var f := FileAccess.open("res://build_info.json", FileAccess.READ)
+		var parsed = JSON.parse_string(f.get_as_text())
+		if typeof(parsed) == TYPE_DICTIONARY:
+			build_info = parsed
+
+
+func set_setting(key: String, value: Variant) -> void:
+	settings[key] = value
+	var cf := ConfigFile.new()
+	for k in settings.keys():
+		cf.set_value("settings", k, settings[k])
+	cf.save(SETTINGS_PATH)
+	settings_changed.emit()
+
+
+func version_text() -> String:
+	var v := "Driftnest %s" % ProjectSettings.get_setting("application/config/version", "dev")
+	if build_info.has("commit"):
+		v += "  ·  build %s, %s" % [str(build_info["commit"]).substr(0, 7), str(build_info.get("date", ""))]
+	return v
+
+
 func _ready() -> void:
+	_load_settings()
 	var font: Font = load("res://fonts/Nunito-ExtraBold.woff2")
 	if font:
 		ThemeDB.fallback_font = font
@@ -75,6 +111,14 @@ func _notification(what: int) -> void:
 # ================================================================ new game
 
 func new_game() -> void:
+	_fresh_state()
+	first_run = true
+	save_game()
+	changed.emit()
+
+
+## A brand-new town in memory (no saving, no signals).
+func _fresh_state() -> void:
 	res = {"glimmer": 50, "wood": 25, "stone": 10, "berries": 6, "fish": 0, "crystal": 0}
 	pets = []
 	eggs = []
@@ -95,9 +139,6 @@ func new_game() -> void:
 	_add_egg("meadow", "nest")
 	for k in ["hammer", "axe", "basket"]:
 		_add_tool(k, 0)
-	first_run = true
-	save_game()
-	changed.emit()
 
 
 func _new_id() -> int:
@@ -548,7 +589,7 @@ func can_place(type: String, cell: Vector2i, check_cost: bool = true) -> String:
 				"rock": return "Needs %d rocks nearby (%d)" % [int(info["need_n"]), n]
 				"crystal": return "Needs a crystal outcrop nearby"
 				"water": return "Must touch the water"
-	if check_cost and not can_afford(info["cost"]):
+	if check_cost and not can_afford(build_cost(type)):
 		return "Not enough resources"
 	return ""
 
@@ -557,14 +598,33 @@ func place_building(type: String, cell: Vector2i) -> Dictionary:
 	if can_place(type, cell) != "":
 		return {}
 	var info: Dictionary = Data.BUILDINGS[type]
-	spend(info["cost"])
+	var cost := build_cost(type)
+	spend(cost)
 	var b := _add_building(type, cell, int(info["work"]) <= 0)
+	b["paid"] = cost
 	if bool(b["built"]):
 		building_done.emit(b)
 	elif _builders_count() == 0:
 		toast.emit("Construction started! Send a pet with a hammer to the Builder's Hut, or help build it yourself.")
 	mark_dirty()
 	return b
+
+
+## What the next copy of a building costs. Each extra house or workplace costs more than
+## the last (Data.COST_GROWTH), so the town grows steadily instead of snowballing.
+func build_cost(type: String) -> Dictionary:
+	var info: Dictionary = Data.BUILDINGS[type]
+	var base: Dictionary = info["cost"]
+	if bool(info.get("deco", false)) or bool(info.get("fixed", false)):
+		return base
+	var n := buildings_of(type, false).size()
+	if n == 0:
+		return base
+	var mult := pow(float(Data.COST_GROWTH.get(type, Data.COST_GROWTH["default"])), n)
+	var out := {}
+	for r in base:
+		out[r] = int(ceilf(float(base[r]) * mult / 5.0) * 5.0)
+	return out
 
 
 func _builders_count() -> int:
@@ -580,7 +640,7 @@ func demolish(bid: int) -> void:
 		return
 	for p in workers_at(bid):
 		p["work"] = -1
-	var cost: Dictionary = Data.BUILDINGS[b["type"]]["cost"]
+	var cost: Dictionary = b.get("paid", Data.BUILDINGS[b["type"]]["cost"])
 	for r in cost:
 		gain(r, int(cost[r]) / 2 if bool(b["built"]) else int(cost[r]))
 	buildings.erase(b)
@@ -681,13 +741,17 @@ func feed(pid: int, food: String) -> bool:
 	return true
 
 
-func sell(r: String, n: int) -> void:
+## Sell in lots of 10 at the Market. Returns the glimmer earned.
+func sell(r: String, n: int) -> int:
 	n = mini(n, int(res.get(r, 0)))
+	n -= n % 10
 	if n <= 0:
-		return
+		return 0
 	res[r] = int(res[r]) - n
-	gain("glimmer", n * int(Data.RESOURCES[r]["sell"]))
+	var earned := n / 10 * int(Data.RESOURCES[r]["sell10"])
+	gain("glimmer", earned)
 	mark_dirty()
+	return earned
 
 
 func buy_egg(type: String) -> bool:
@@ -817,40 +881,96 @@ func _check_goals() -> void:
 
 
 # ================================================================ saving
+#
+# Saves are versioned. When the format changes, bump SAVE_VERSION and add a
+# `_migrate_<n>` step that upgrades a version-n dictionary to version n+1, so players
+# never lose their town. Writes go to a temp file first, then replace the save, and the
+# previous save is kept as a .bak in case anything goes wrong.
 
-func save_game() -> void:
-	_dirty = false
-	_save_timer = 0.0
+const SAVE_TMP := "user://driftnest_save.tmp"
+const SAVE_BAK := "user://driftnest_save.bak"
+
+## Set when a save from a NEWER game version is found (e.g. an old cached web build):
+## we play on a fresh town in memory but never overwrite that newer save.
+var save_locked := false
+## Shown once by the HUD after an old save is upgraded.
+var migration_note := ""
+
+
+func _to_dict() -> Dictionary:
 	var bl: Array = []
 	for b in buildings:
 		bl.append({"id": b["id"], "type": b["type"], "x": b["cell"].x, "y": b["cell"].y,
-			"built": b["built"], "progress": b["progress"]})
-	var data := {
+			"built": b["built"], "progress": b["progress"], "paid": b.get("paid", {})})
+	return {
 		"version": SAVE_VERSION,
 		"time": Time.get_unix_time_from_system(),
 		"res": res, "pets": pets, "eggs": eggs, "tools": tools, "buildings": bl,
 		"town_level": town_level, "discovered": discovered.keys(), "goal_index": goal_index,
 		"stats": stats, "next_id": next_id, "house_t": _house_t,
 	}
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+
+
+func save_game() -> void:
+	_dirty = false
+	_save_timer = 0.0
+	if save_locked:
+		return
+	var f := FileAccess.open(SAVE_TMP, FileAccess.WRITE)
 	if f == null:
 		push_warning("Could not save: %s" % FileAccess.get_open_error())
 		return
-	f.store_string(JSON.stringify(data))
+	f.store_string(JSON.stringify(_to_dict()))
 	f.close()
+	var dir := DirAccess.open("user://")
+	if dir == null:
+		return
+	if dir.file_exists(SAVE_PATH.get_file()):
+		if dir.file_exists(SAVE_BAK.get_file()):
+			dir.remove(SAVE_BAK.get_file())
+		dir.rename(SAVE_PATH.get_file(), SAVE_BAK.get_file())
+	dir.rename(SAVE_TMP.get_file(), SAVE_PATH.get_file())
+
+
+func _read_json(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return null
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	return parsed if typeof(parsed) == TYPE_DICTIONARY else null
 
 
 func load_game() -> bool:
-	if not FileAccess.file_exists(SAVE_PATH):
+	var parsed = _read_json(SAVE_PATH)
+	if parsed == null:
+		parsed = _read_json(SAVE_BAK) # main save missing or corrupt: fall back to the backup
+	if parsed == null:
 		return false
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		return false
-	var parsed = JSON.parse_string(f.get_as_text())
-	f.close()
-	if typeof(parsed) != TYPE_DICTIONARY or int(parsed.get("version", 0)) != SAVE_VERSION:
-		return false # old sky-island saves start fresh
 	var d: Dictionary = parsed
+	var version := int(d.get("version", 1))
+	if version > SAVE_VERSION:
+		save_locked = true
+		push_warning("Save is from a newer version (%d); not touching it." % version)
+		return false
+	while version < SAVE_VERSION:
+		d = call("_migrate_%d" % version, d)
+		version += 1
+		d["version"] = version
+	_from_dict(d)
+	first_run = false
+	# offline progress
+	var away := Time.get_unix_time_from_system() - float(d.get("time", Time.get_unix_time_from_system()))
+	away = clampf(away, 0.0, Data.OFFLINE_CAP)
+	offline_report = {}
+	if away > 30.0:
+		offline_report = simulate(away)
+	return true
+
+
+func _from_dict(d: Dictionary) -> void:
 	res = {}
 	for r in Data.RESOURCES:
 		res[r] = int(d.get("res", {}).get(r, 0))
@@ -862,7 +982,7 @@ func load_game() -> bool:
 		for job in p.get("skills", {}):
 			if Data.JOBS.has(job):
 				skills[job] = {"lvl": int(p["skills"][job]["lvl"]), "xp": float(p["skills"][job]["xp"])}
-		pets.append({"id": int(p["id"]), "species": str(p["species"]), "level": int(p.get("level", 1)),
+		pets.append({"id": int(p["id"]), "species": str(p["species"]), "level": clampi(int(p.get("level", 1)), 1, Data.MAX_LEVEL),
 			"xp": int(p.get("xp", 0)), "prism": bool(p.get("prism", false)), "tool": int(p.get("tool", -1)),
 			"work": int(p.get("work", -1)), "skills": skills, "t": float(p.get("t", 0.0))})
 	eggs = []
@@ -877,8 +997,11 @@ func load_game() -> bool:
 	buildings = []
 	for b in d.get("buildings", []):
 		if Data.BUILDINGS.has(str(b.get("type", ""))):
-			buildings.append({"id": int(b["id"]), "type": str(b["type"]), "cell": Vector2i(int(b["x"]), int(b["y"])),
-				"built": bool(b.get("built", true)), "progress": float(b.get("progress", 0.0))})
+			var nb := {"id": int(b["id"]), "type": str(b["type"]), "cell": Vector2i(int(b["x"]), int(b["y"])),
+				"built": bool(b.get("built", true)), "progress": float(b.get("progress", 0.0))}
+			if typeof(b.get("paid")) == TYPE_DICTIONARY and not b["paid"].is_empty():
+				nb["paid"] = b["paid"]
+			buildings.append(nb)
 	town_level = clampi(int(d.get("town_level", 1)), 1, Data.TOWN_LEVELS.size())
 	discovered = {}
 	for s in d.get("discovered", []):
@@ -887,18 +1010,55 @@ func load_game() -> bool:
 	stats = d.get("stats", {})
 	next_id = int(d.get("next_id", 1))
 	_house_t = float(d.get("house_t", 0.0))
-	first_run = false
-	# offline progress
-	var away := Time.get_unix_time_from_system() - float(d.get("time", Time.get_unix_time_from_system()))
-	away = clampf(away, 0.0, Data.OFFLINE_CAP)
-	offline_report = {}
-	if away > 30.0:
-		offline_report = simulate(away)
-	return true
+
+
+## Version 1 was the sky-island prototype: one companion, chores, no town.
+## Keep the player's creatures, eggs, glimmer and Pet Log; give them a fresh town.
+func _migrate_1(old: Dictionary) -> Dictionary:
+	_fresh_state()
+	var d := _to_dict()
+	d["res"]["glimmer"] = maxi(int(d["res"]["glimmer"]), int(old.get("glimmer", 0)))
+	var top_id := int(d["next_id"])
+	var new_pets: Array = []
+	for p in old.get("pets", []):
+		if typeof(p) != TYPE_DICTIONARY or not Data.SPECIES.has(str(p.get("species", ""))):
+			continue
+		new_pets.append({"id": top_id, "species": str(p["species"]),
+			"level": clampi(int(p.get("level", 1)) * 2 - 1, 1, Data.MAX_LEVEL), "xp": 0,
+			"prism": bool(p.get("prism", false)), "tool": -1, "work": -1, "skills": {}, "t": 0.0})
+		top_id += 1
+	var new_eggs: Array = []
+	var carried := int(old.get("carried_egg", -1))
+	for e in old.get("eggs", []):
+		if typeof(e) != TYPE_DICTIONARY or not Data.EGGS.has(str(e.get("type", ""))):
+			continue
+		var need := float(Data.EGGS[str(e["type"])]["warmth"])
+		new_eggs.append({"id": top_id, "type": str(e["type"]), "warmth": minf(float(e.get("warmth", 0)), need * 0.9),
+			"loc": "carry" if int(e.get("id", -2)) == carried else "bag", "waiting": false})
+		top_id += 1
+	if not new_pets.is_empty():
+		d["pets"] = new_pets
+		d["eggs"] = new_eggs # their old eggs replace the starter eggs
+	var dex: Array = d["discovered"]
+	for s in old.get("discovered", []):
+		if not dex.has(str(s)):
+			dex.append(str(s))
+	for p in new_pets:
+		if not dex.has(p["species"]):
+			dex.append(p["species"])
+	d["next_id"] = top_id
+	d["time"] = Time.get_unix_time_from_system()
+	migration_note = "Driftnest has grown into a town! Your %d pet(s) and their eggs moved in with you. Tap a pet to give it a job." % new_pets.size()
+	return d
 
 
 func reset_save() -> void:
-	if FileAccess.file_exists(SAVE_PATH):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+	var dir := DirAccess.open("user://")
+	if dir:
+		for p in [SAVE_PATH, SAVE_TMP, SAVE_BAK]:
+			if dir.file_exists(p.get_file()):
+				dir.remove(p.get_file())
+	save_locked = false
+	migration_note = ""
 	_pending_hatches = []
 	new_game()

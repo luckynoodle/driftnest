@@ -295,6 +295,8 @@ func _run() -> void:
 	_check(Game.load_game(), "save loads")
 	_check(Game.pets.size() == n_pets and Game.buildings.size() == n_b, "save round-trips")
 
+	await _save_tests()
+
 	Game.reset_save()
 	print("Screenshots: ", shot_dir)
 	if failures.is_empty():
@@ -303,3 +305,46 @@ func _run() -> void:
 	else:
 		print("SMOKE FAILED: ", failures)
 		get_tree().quit(1)
+
+
+func _write(path: String, text: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
+
+
+func _save_tests() -> void:
+	# 1) a version-1 (sky island) save is upgraded, keeping pets, eggs and glimmer
+	Game.reset_save()
+	var v1 := {"glimmer": 321, "carried_egg": 9, "companion": 3, "next_id": 12, "jobs_done": 40,
+		"discovered": ["fennec", "kitsune"],
+		"pets": [{"id": 3, "species": "fennec", "level": 3, "xp": 5, "prism": true, "wish": "nap"},
+			{"id": 5, "species": "kitsune", "level": 5, "xp": 0, "prism": false, "wish": "berries"}],
+		"eggs": [{"id": 9, "type": "tide", "warmth": 30}, {"id": 10, "type": "ember", "warmth": 0}]}
+	_write(Game.SAVE_PATH, JSON.stringify(v1))
+	_check(Game.load_game(), "v1 save loads through migration")
+	_check(Game.pets.size() == 2 and Game.find_pet(int(Game.pets[0]["id"]))["species"] == "fennec", "v1 pets kept")
+	_check(int(Game.pets[0]["level"]) == 5 and int(Game.pets[1]["level"]) == 9, "v1 levels mapped to the 1-10 scale")
+	_check(bool(Game.pets[0]["prism"]), "prismatic kept")
+	_check(int(Game.res["glimmer"]) == 321, "v1 glimmer kept")
+	_check(Game.eggs.size() == 2 and not Game.carried_egg().is_empty() and Game.carried_egg()["type"] == "tide", "v1 eggs kept, carried egg still carried")
+	_check(not Game.buildings_of("town_hall").is_empty(), "migrated player gets a town")
+	_check(Game.migration_note != "", "migration note for the player")
+	Game.save_game()
+	_check(int(Game._read_json(Game.SAVE_PATH)["version"]) == Game.SAVE_VERSION, "upgraded save written at the current version")
+	# 2) a save from a newer version is never overwritten
+	var future := {"version": Game.SAVE_VERSION + 1, "secret": "keep me"}
+	_write(Game.SAVE_PATH, JSON.stringify(future))
+	_check(not Game.load_game() and Game.save_locked, "newer save is detected and locked")
+	Game.save_game()
+	_check(str(Game._read_json(Game.SAVE_PATH).get("secret", "")) == "keep me", "newer save left untouched")
+	Game.save_locked = false
+	# 3) a corrupt save falls back to the backup
+	Game.reset_save()
+	Game.res["glimmer"] = 777
+	Game.save_game()
+	Game.res["glimmer"] = 778
+	Game.save_game() # 777 is now the .bak
+	_write(Game.SAVE_PATH, "{ this is not json")
+	_check(Game.load_game() and int(Game.res["glimmer"]) == 777, "corrupt save recovers from the backup")
+

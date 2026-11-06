@@ -15,6 +15,14 @@ func _ready() -> void:
 	font = ThemeDB.fallback_font
 
 
+var _target := Vector2.INF
+
+
+## Little ring where a tap-to-walk lands.
+func mark_target(p: Vector2) -> void:
+	_target = p
+
+
 func float_text(text: String, pos: Vector2, col: Color, delay: float = 0.0) -> void:
 	if floaters.size() > 40:
 		return
@@ -44,6 +52,10 @@ func _draw() -> void:
 	if placing:
 		_draw_grid()
 	_draw_badges()
+	if _target != Vector2.INF and main.walk_target != Vector2.INF:
+		var k := 0.5 + 0.5 * sin(t * 6.0)
+		draw_arc(_target, 14.0 + 3.0 * k, 0.0, TAU, 28, PetArt.INK, 5.0, true)
+		draw_arc(_target, 14.0 + 3.0 * k, 0.0, TAU, 28, Color("#fff3c4"), 3.0, true)
 
 	# keeper action ring
 	var act: Dictionary = main.action

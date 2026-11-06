@@ -54,6 +54,12 @@ jobs:
       - name: Smoke test (headless play-through)
         run: timeout 300 ~/godot/godot --headless --path . -- --smoke
 
+      - name: Balance check (simulated first two hours must hit the pacing targets)
+        run: timeout 300 ~/godot/godot --headless --path . -- --balance
+
+      - name: Stamp build info (shown in Settings so testers can say which build they're on)
+        run: echo "{\"commit\":\"${GITHUB_SHA}\",\"date\":\"$(date -u +%Y-%m-%d)\"}" > build_info.json
+
       - name: Export web build
         run: |
           mkdir -p build/web

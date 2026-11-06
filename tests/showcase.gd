@@ -20,6 +20,9 @@ func _shot(name: String) -> void:
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var dir := OS.get_user_data_dir().path_join("shots")
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--tag="):
+			name = arg.substr(6) + "_" + name
 	DirAccess.make_dir_recursive_absolute(dir)
 	get_viewport().get_texture().get_image().save_png(dir.path_join(name + ".png"))
 	print("shot ", name)
@@ -155,5 +158,18 @@ func _run() -> void:
 	main.hud.close_modal()
 	await _frames(3)
 	await _shot("s7_hud")
+	main.hud.open_settings()
+	await _frames(5)
+	await _shot("s8_settings")
+	main.hud.close_modal()
+	main.hud._pets_tab = "mine"
+	main.hud.open_pets()
+	await _frames(5)
+	await _shot("s9_pets")
+	main.hud.close_modal()
+	main.start_placing("house")
+	await _frames(5)
+	await _shot("s10_placing")
+	main.cancel_place()
 	Game.reset_save()
 	get_tree().quit()

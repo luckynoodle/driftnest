@@ -2,3 +2,4 @@
 build/
 export_credentials.cfg
 .DS_Store
+build_info.json

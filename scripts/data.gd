@@ -5,6 +5,10 @@ extends RefCounted
 
 # ------------------------------------------------------------------ pets
 
+## Where the "Send feedback" button in Settings goes (e.g. a Google Form link).
+## Leave empty to hide the button.
+const FEEDBACK_URL := ""
+
 const MAX_LEVEL := 10
 const MAX_STAGE := 5
 const STAGES := ["Sprout", "Fledgling", "Bloom", "Elder", "Radiant"]
@@ -67,13 +71,13 @@ const SPECIES_ORDER := [
 const EGGS := {
 	"dawn": {"name": "Dawn Egg", "price": 0, "warmth": 25, "shell": "#fff0c2", "spots": "#ffb86b", "habitat": "meadow",
 		"pool": [["hedgehog", 35], ["fennec", 35], ["axolotl", 15], ["salamander", 15]]},
-	"meadow": {"name": "Meadow Egg", "price": 60, "warmth": 50, "shell": "#d9f5c0", "spots": "#7cc95a", "habitat": "meadow",
+	"meadow": {"name": "Meadow Egg", "price": 90, "warmth": 50, "shell": "#d9f5c0", "spots": "#7cc95a", "habitat": "meadow",
 		"pool": [["hedgehog", 30], ["fennec", 28], ["capybara", 18], ["red_panda", 15], ["luna_moth", 7], ["okapi", 2]]},
-	"tide": {"name": "Tide Egg", "price": 150, "warmth": 80, "shell": "#cdeefa", "spots": "#3fa9d6", "habitat": "tide",
+	"tide": {"name": "Tide Egg", "price": 250, "warmth": 80, "shell": "#cdeefa", "spots": "#3fa9d6", "habitat": "tide",
 		"pool": [["axolotl", 30], ["seal", 28], ["sea_otter", 25], ["narwhal", 13], ["kelpie", 4]]},
-	"ember": {"name": "Ember Egg", "price": 320, "warmth": 120, "shell": "#ffd9c2", "spots": "#ff6a3d", "habitat": "ember",
+	"ember": {"name": "Ember Egg", "price": 600, "warmth": 120, "shell": "#ffd9c2", "spots": "#ff6a3d", "habitat": "ember",
 		"pool": [["jackalope", 30], ["salamander", 30], ["kitsune", 25], ["qilin", 12], ["thunderbird", 3]]},
-	"aurora": {"name": "Aurora Egg", "price": 700, "warmth": 180, "shell": "#e7dcff", "spots": "#9a6bff", "habitat": "aurora",
+	"aurora": {"name": "Aurora Egg", "price": 1400, "warmth": 180, "shell": "#e7dcff", "spots": "#9a6bff", "habitat": "aurora",
 		"pool": [["wolpertinger", 35], ["moon_hare", 35], ["sky_whale", 24], ["aurora_stag", 6]]},
 }
 
@@ -82,12 +86,13 @@ const EGG_ORDER := ["meadow", "tide", "ember", "aurora"]
 # ------------------------------------------------------------------ resources
 
 const RESOURCES := {
-	"glimmer": {"name": "Glimmer", "color": "#7fd6ff", "sell": 0},
-	"wood": {"name": "Wood", "color": "#b07a45", "sell": 1},
-	"stone": {"name": "Stone", "color": "#9aa3ad", "sell": 1},
-	"berries": {"name": "Berries", "color": "#6b5cff", "sell": 1},
-	"fish": {"name": "Fish", "color": "#4fb6dd", "sell": 3},
-	"crystal": {"name": "Crystal", "color": "#c58cff", "sell": 8},
+	# sell10 = glimmer paid at the Market for 10 of this resource
+	"glimmer": {"name": "Glimmer", "color": "#7fd6ff", "sell10": 0},
+	"wood": {"name": "Wood", "color": "#b07a45", "sell10": 2},
+	"stone": {"name": "Stone", "color": "#9aa3ad", "sell10": 3},
+	"berries": {"name": "Berries", "color": "#6b5cff", "sell10": 4},
+	"fish": {"name": "Fish", "color": "#4fb6dd", "sell10": 15},
+	"crystal": {"name": "Crystal", "color": "#c58cff", "sell10": 60},
 }
 const RES_ORDER := ["wood", "stone", "berries", "fish", "crystal"]
 
@@ -118,9 +123,9 @@ const TOOLS := {
 const TOOL_ORDER := ["axe", "basket", "pickaxe", "rod", "hammer", "compass"]
 
 const TIERS := [
-	{"name": "Wooden", "mult": 1.0, "color": "#c08a55", "cost": {"wood": 6, "stone": 2}},
-	{"name": "Stone", "mult": 1.5, "color": "#9aa3ad", "cost": {"wood": 10, "stone": 15}},
-	{"name": "Crystal", "mult": 2.2, "color": "#c58cff", "cost": {"wood": 15, "stone": 15, "crystal": 10}},
+	{"name": "Wooden", "mult": 1.0, "color": "#c08a55", "cost": {"wood": 10, "stone": 4}},
+	{"name": "Stone", "mult": 1.5, "color": "#9aa3ad", "cost": {"wood": 25, "stone": 40}},
+	{"name": "Crystal", "mult": 2.2, "color": "#c58cff", "cost": {"wood": 40, "stone": 40, "crystal": 20}},
 ]
 
 # ------------------------------------------------------------------ buildings
@@ -136,46 +141,49 @@ const BUILDINGS := {
 		"desc": "Spend glimmer on new eggs."},
 	"builder_hut": {"name": "Builder's Hut", "size": Vector2i(2, 2), "cost": {}, "work": 0, "fixed": true,
 		"job": "building", "slots": 3, "desc": "Pets with a hammer work here and build anything under construction."},
-	"house": {"name": "House", "size": Vector2i(2, 2), "cost": {"wood": 20, "stone": 10}, "work": 25, "th": 1,
+	"house": {"name": "House", "size": Vector2i(2, 2), "cost": {"wood": 40, "stone": 25}, "work": 60, "th": 1,
 		"desc": "Room for 2 more pets. Residents leave a little glimmer each day."},
-	"lumber_camp": {"name": "Lumber Camp", "size": Vector2i(2, 2), "cost": {"wood": 12}, "work": 15, "th": 1,
+	"lumber_camp": {"name": "Lumber Camp", "size": Vector2i(2, 2), "cost": {"wood": 15}, "work": 20, "th": 1,
 		"job": "woodcutting", "res": "wood", "slots": 2, "need": "tree", "need_n": 3,
 		"desc": "Pets with an axe chop wood. Must be near at least 3 trees."},
-	"berry_farm": {"name": "Berry Farm", "size": Vector2i(2, 2), "cost": {"wood": 10}, "work": 15, "th": 1,
+	"berry_farm": {"name": "Berry Farm", "size": Vector2i(2, 2), "cost": {"wood": 30}, "work": 40, "th": 1,
 		"job": "foraging", "res": "berries", "slots": 2,
 		"desc": "Pets with a basket gather berries. Feed berries to pets for XP."},
-	"quarry": {"name": "Quarry", "size": Vector2i(2, 2), "cost": {"wood": 20}, "work": 20, "th": 1,
+	"quarry": {"name": "Quarry", "size": Vector2i(2, 2), "cost": {"wood": 35}, "work": 45, "th": 1,
 		"job": "mining", "res": "stone", "slots": 2, "need": "rock", "need_n": 2,
 		"desc": "Pets with a pickaxe dig stone. Must be near at least 2 rocks."},
-	"workshop": {"name": "Workshop", "size": Vector2i(2, 2), "cost": {"wood": 25, "stone": 15}, "work": 30, "th": 1,
+	"workshop": {"name": "Workshop", "size": Vector2i(2, 2), "cost": {"wood": 70, "stone": 40}, "work": 90, "th": 1,
 		"desc": "Craft tools for your pets. Better tools mean faster work."},
-	"market": {"name": "Market", "size": Vector2i(2, 2), "cost": {"wood": 20, "stone": 20}, "work": 30, "th": 1,
+	"market": {"name": "Market", "size": Vector2i(2, 2), "cost": {"wood": 60, "stone": 45}, "work": 90, "th": 1,
 		"desc": "Sell spare resources for glimmer."},
-	"fishing_dock": {"name": "Fishing Dock", "size": Vector2i(2, 2), "cost": {"wood": 30, "stone": 10}, "work": 30, "th": 2,
+	"fishing_dock": {"name": "Fishing Dock", "size": Vector2i(2, 2), "cost": {"wood": 120, "stone": 60}, "work": 150, "th": 2,
 		"job": "fishing", "res": "fish", "slots": 2, "need": "water", "need_n": 1,
 		"desc": "Pets with a rod catch fish. Must touch the lake. Fish are great pet food."},
-	"explorer_lodge": {"name": "Explorer's Lodge", "size": Vector2i(2, 2), "cost": {"wood": 40, "stone": 30, "berries": 15}, "work": 40, "th": 2,
+	"explorer_lodge": {"name": "Explorer's Lodge", "size": Vector2i(2, 2), "cost": {"wood": 180, "stone": 120, "berries": 40}, "work": 200, "th": 2,
 		"job": "exploring", "slots": 2,
 		"desc": "Pets with a compass go on trips and bring back glimmer, resources and sometimes eggs."},
-	"crystal_mine": {"name": "Crystal Mine", "size": Vector2i(2, 2), "cost": {"wood": 50, "stone": 50}, "work": 50, "th": 3,
+	"crystal_mine": {"name": "Crystal Mine", "size": Vector2i(2, 2), "cost": {"wood": 300, "stone": 300}, "work": 300, "th": 3,
 		"job": "mining", "res": "crystal", "slots": 2, "need": "crystal", "need_n": 1, "time_mult": 2.0,
 		"desc": "Pets with a pickaxe mine crystal. Must be near a crystal outcrop."},
-	"path": {"name": "Path", "size": Vector2i(1, 1), "cost": {"stone": 1}, "work": 0, "th": 1, "deco": true, "charm": 0,
+	"path": {"name": "Path", "size": Vector2i(1, 1), "cost": {"stone": 2}, "work": 0, "th": 1, "deco": true, "charm": 0,
 		"desc": "A stone path tile."},
-	"flower_bed": {"name": "Flower Bed", "size": Vector2i(1, 1), "cost": {"wood": 3, "berries": 3}, "work": 2, "th": 1, "deco": true, "charm": 1,
+	"flower_bed": {"name": "Flower Bed", "size": Vector2i(1, 1), "cost": {"wood": 6, "berries": 6}, "work": 5, "th": 1, "deco": true, "charm": 1,
 		"desc": "+1 charm."},
-	"sapling": {"name": "Planted Tree", "size": Vector2i(1, 1), "cost": {"berries": 4}, "work": 2, "th": 1, "deco": true, "charm": 1, "counts_as": "tree",
+	"sapling": {"name": "Planted Tree", "size": Vector2i(1, 1), "cost": {"berries": 8}, "work": 5, "th": 1, "deco": true, "charm": 1, "counts_as": "tree",
 		"desc": "+1 charm, and counts as a tree for Lumber Camps."},
-	"lamp": {"name": "Lamp Post", "size": Vector2i(1, 1), "cost": {"stone": 6, "wood": 2}, "work": 3, "th": 1, "deco": true, "charm": 2,
+	"lamp": {"name": "Lamp Post", "size": Vector2i(1, 1), "cost": {"stone": 15, "wood": 5}, "work": 8, "th": 1, "deco": true, "charm": 2,
 		"desc": "+2 charm."},
-	"fountain": {"name": "Fountain", "size": Vector2i(2, 2), "cost": {"stone": 40, "crystal": 5}, "work": 30, "th": 3, "deco": true, "charm": 8,
+	"fountain": {"name": "Fountain", "size": Vector2i(2, 2), "cost": {"stone": 150, "crystal": 20}, "work": 120, "th": 3, "deco": true, "charm": 8,
 		"desc": "+8 charm."},
-	"statue": {"name": "Pet Statue", "size": Vector2i(2, 2), "cost": {"stone": 80, "crystal": 25, "glimmer": 300}, "work": 60, "th": 4, "deco": true, "charm": 15,
+	"statue": {"name": "Pet Statue", "size": Vector2i(2, 2), "cost": {"stone": 300, "crystal": 80, "glimmer": 600}, "work": 240, "th": 4, "deco": true, "charm": 15,
 		"desc": "+15 charm. A monument to your best friends."},
 }
 
 const BUILD_ORDER := ["house", "lumber_camp", "berry_farm", "quarry", "workshop", "market", "fishing_dock",
 	"explorer_lodge", "crystal_mine", "path", "flower_bed", "sapling", "lamp", "fountain", "statue"]
+
+## Each extra copy of a building costs this much more than the previous one.
+const COST_GROWTH := {"house": 1.4, "default": 1.5}
 
 const HOUSE_CAPACITY := 2
 const BASE_CAPACITY := 2
@@ -185,10 +193,10 @@ const OFFLINE_CAP := 8.0 * 3600.0
 # Town Hall: radius = town border in tiles from the centre
 const TOWN_LEVELS := [
 	{"radius": 10.0, "cost": {}},
-	{"radius": 14.0, "cost": {"wood": 60, "stone": 40, "glimmer": 100}},
-	{"radius": 18.5, "cost": {"wood": 150, "stone": 120, "fish": 20, "glimmer": 300}},
-	{"radius": 23.0, "cost": {"wood": 300, "stone": 250, "crystal": 40, "glimmer": 800}},
-	{"radius": 28.0, "cost": {"wood": 600, "stone": 500, "crystal": 120, "glimmer": 2000}},
+	{"radius": 14.0, "cost": {"wood": 250, "stone": 180, "glimmer": 350}},
+	{"radius": 18.5, "cost": {"wood": 700, "stone": 550, "fish": 80, "glimmer": 1200}},
+	{"radius": 23.0, "cost": {"wood": 1500, "stone": 1200, "crystal": 80, "glimmer": 1800}},
+	{"radius": 28.0, "cost": {"wood": 3000, "stone": 2500, "crystal": 250, "glimmer": 4500}},
 ]
 
 # ------------------------------------------------------------------ goals (tutorial chain)
