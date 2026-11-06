@@ -15,6 +15,7 @@ var cam: Camera2D
 var building_nodes: Dictionary = {} # bid -> BuildingView
 var pet_nodes: Dictionary = {} # pid -> PetActor
 var occupied: Dictionary = {} # Vector2i -> bid (solid buildings only)
+var props: Dictionary = {} # Vector2i -> NatureProp
 
 var placing := ""
 var ghost: BuildingView
@@ -59,8 +60,11 @@ func _ready() -> void:
 		var pr := NatureProp.new()
 		pr.kind = Game.map.nodes[cell]
 		pr.variant = WorldMap.hash01(cell, 1)
+		pr.stage = Game.node_stage(cell)
 		pr.position = WorldMap.cell_center(cell) + Vector2((WorldMap.hash01(cell, 2) - 0.5) * 16.0, T * 0.35)
 		ysort.add_child(pr)
+		props[cell] = pr
+	Game.node_changed.connect(_on_node_changed)
 
 	keeper = Keeper.new()
 	keeper.scale = Vector2(0.8, 0.8)
@@ -168,6 +172,19 @@ func _sync() -> void:
 			pet_nodes.erase(pid)
 
 
+func _on_node_changed(cell: Vector2i) -> void:
+	var pr: NatureProp = props.get(cell)
+	if pr and pr.stage != Game.node_stage(cell):
+		pr.stage = Game.node_stage(cell)
+		pr.queue_redraw()
+
+
+## After a reset or load, bring every prop in line with the saved state.
+func refresh_props() -> void:
+	for cell in props:
+		_on_node_changed(cell)
+
+
 func _apply_settings() -> void:
 	post_layer.visible = bool(Game.settings.get("effects", true))
 	ambient.visible = bool(Game.settings.get("ambient", true))
@@ -180,6 +197,7 @@ func reset_view() -> void:
 	cam_free = false
 	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
 	_sync()
+	refresh_props()
 	snap_camera()
 
 
@@ -450,20 +468,16 @@ func _find_action() -> Dictionary:
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
 			var c := kc + Vector2i(dx, dy)
-			var kind := ""
-			if Game.map.nodes.has(c):
-				kind = Game.map.nodes[c]
-			elif Game.map.water.has(c):
-				kind = "water"
-			if kind == "":
+			var kind := Game.node_kind(c)
+			if kind == "" or Game.node_left(c) <= 0:
 				continue
 			var d := keeper.position.distance_to(WorldMap.cell_center(c) + Vector2(0, T * 0.35))
 			if kind == "water":
 				d = keeper.position.distance_to(WorldMap.cell_center(c)) - 20.0
 			if d < best_d:
 				best_d = d
-				var labels := {"tree": "Chop wood", "rock": "Mine stone", "bush": "Pick berries", "crystal": "Mine crystal", "water": "Catch fish"}
-				best = {"kind": "gather", "node": kind, "cell": c, "label": labels[kind]}
+				best = {"kind": "gather", "node": kind, "cell": c,
+					"label": "%s (%d left)" % [Data.NODES[kind]["verb"], Game.node_left(c)]}
 	return best
 
 
@@ -496,7 +510,11 @@ func do_action() -> void:
 			var node: String = action["node"]
 			action_cd_max = 1.5 if node == "crystal" else (1.0 if node == "water" else 0.5)
 			action_cd = action_cd_max
-			var r := Game.keeper_gather(node)
-			if r != "":
+			var r := Game.keeper_gather_at(action["cell"])
+			if r == "full":
+				action_hold = false
+				var rn: String = Data.NODES[node]["res"]
+				hud.toast("Your %s store is full! Build a Storehouse, or sell some at the Market." % Data.RESOURCES[rn]["name"].to_lower())
+			elif r != "" and r != "empty":
 				overlay.float_text("+1 %s" % Data.RESOURCES[r]["name"].to_lower(), keeper.position + Vector2(0, -110),
 					Color(Data.RESOURCES[r]["color"]).lightened(0.35))

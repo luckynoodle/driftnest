@@ -18,6 +18,7 @@ var joystick
 var theme_res: Theme
 
 var res_labels: Dictionary = {}
+var res_bars: Dictionary = {}
 var goal_label: Label
 var goal_reward: Label
 var goal_panel: PanelContainer
@@ -360,9 +361,17 @@ func _build_topbar() -> void:
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var h := _hbox(4)
 		h.add_child(_res_icon(r, 22))
+		var lv := _vbox(0)
+		lv.alignment = BoxContainer.ALIGNMENT_CENTER
 		var l := _label("0", 18)
 		l.custom_minimum_size = Vector2(30, 0)
-		h.add_child(l)
+		lv.add_child(l)
+		if Data.STORAGE_BASE.has(r):
+			# how full the store is
+			var sb := _bar(Color("#7ed492"), 34, 4)
+			lv.add_child(sb)
+			res_bars[r] = sb
+		h.add_child(lv)
 		chip.add_child(h)
 		chip_flow.add_child(chip)
 		res_labels[r] = l
@@ -544,6 +553,16 @@ func toast(text: String) -> void:
 func refresh() -> void:
 	for r in ["glimmer"] + Data.RES_ORDER:
 		res_labels[r].text = str(int(Game.res.get(r, 0)))
+		if res_bars.has(r):
+			var cap := Game.storage_cap(r)
+			var have := int(Game.res.get(r, 0))
+			var fill := float(have) / float(cap)
+			var bar: ProgressBar = res_bars[r]
+			bar.max_value = cap
+			bar.value = have
+			var col := Color("#7ed492") if fill < 0.85 else (Color("#ffb347") if fill < 1.0 else Color("#e05a4a"))
+			bar.add_theme_stylebox_override("fill", _sb(col, 3, 0, Color.TRANSPARENT, 0))
+			res_labels[r].add_theme_color_override("font_color", BAD if fill >= 1.0 else TEXT)
 	res_labels["pets"].text = "%d/%d" % [Game.pets.size(), Game.capacity()]
 	res_labels["charm"].text = str(Game.charm())
 	var g := Game.current_goal()
@@ -739,6 +758,8 @@ func open_building(bid: int) -> void:
 			"market": _market_panel(body)
 			"house":
 				body.add_child(_label("Town has room for %d pets (%d living here now)." % [Game.capacity(), Game.pets.size()], 18))
+			"storehouse":
+				_storage_rows(body)
 		if bool(info.get("deco", false)) and int(info.get("charm", 0)) > 0:
 			body.add_child(_label("Town charm: %d  (+%d%% to all production)" % [Game.charm(), int(round((Game.charm_mult() - 1.0) * 100.0))], 18, GOOD))
 	if not bool(info.get("fixed", false)):
@@ -802,6 +823,11 @@ func _work_panel(body: VBoxContainer, b: Dictionary) -> void:
 	var bid := int(b["id"])
 	var workers := Game.workers_at(bid)
 	body.add_child(_section("Workers  %d / %d" % [workers.size(), int(info["slots"])]))
+	if info.has("res") and Game.is_full(info["res"]):
+		body.add_child(_wrap("The %s store is full, so work has paused. Build a Storehouse, spend some, or sell at the Market." % Data.RESOURCES[info["res"]]["name"].to_lower(), 16, BAD))
+	var dec := Game.decor_bonus(b)
+	if dec > 0.0:
+		body.add_child(_label("Nearby decorations: +%d%% speed" % int(round(dec * 100.0)), 15, GOOD))
 	if b["type"] == "builder_hut":
 		var target := Game.construction_target()
 		if target.is_empty():
@@ -885,10 +911,38 @@ func _candidate_card(p: Dictionary, b: Dictionary, give_text: String) -> Control
 	return card
 
 
+func _storage_rows(body: VBoxContainer) -> void:
+	body.add_child(_section("Storage"))
+	for r in Data.RES_ORDER:
+		var row := _hbox(8)
+		row.add_child(_res_icon(r, 24))
+		var cap := Game.storage_cap(r)
+		var have := int(Game.res.get(r, 0))
+		var nl := _label(Data.RESOURCES[r]["name"], 16)
+		nl.custom_minimum_size = Vector2(90, 0)
+		row.add_child(nl)
+		var bar := _bar(Color("#7ed492") if have < cap else Color("#e05a4a"), 200, 12)
+		bar.max_value = cap
+		bar.value = have
+		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(bar)
+		row.add_child(_label("%d / %d" % [have, cap], 15, BAD if have >= cap else SUBTLE))
+		body.add_child(row)
+	body.add_child(_wrap("Each Storehouse adds room for more. Upgrading the Town Hall adds some too.", 14))
+
+
 func _town_hall_panel(body: VBoxContainer) -> void:
 	body.add_child(_section("Town Hall  ·  Level %d" % Game.town_level))
 	body.add_child(_label("Border: %d tiles  ·  Pets: %d / %d  ·  Nest space: %d  ·  Charm: %d" % [
 		int(Game.town_radius()), Game.pets.size(), Game.capacity(), Game.nest_slots(), Game.charm()], 17))
+	_storage_rows(body)
+	var hungry := Game.pets.filter(func(p): return Game.mood(p) == "hungry").size()
+	var per_hour := 0.0
+	for p in Game.pets:
+		per_hour += 3600.0 * (Data.HUNGER_WORKING if Game.is_working(p) else Data.HUNGER_IDLE) / float(Data.FOOD_FILL["berries"])
+	body.add_child(_label("Food: your pets eat about %d berries an hour (fish count for more)." % int(per_hour), 16))
+	if hungry > 0:
+		body.add_child(_label("%d pet(s) are hungry and working slowly." % hungry, 16, BAD))
 	if Game.town_level >= Data.TOWN_LEVELS.size():
 		body.add_child(_label("Your town is fully grown!", 18, GOOD))
 		return
@@ -1038,7 +1092,22 @@ func _pet_status(p: Dictionary) -> String:
 		return "Idle. Has a %s" % Data.TOOLS[Game.pet_tool(p)["kind"]]["name"]
 	if b["type"] == "builder_hut" and Game.construction_target().is_empty():
 		return "Builder. Waiting for something to build"
+	if str(p.get("waiting", "")) == "full":
+		return "Waiting: %s store is full" % Data.RESOURCES[Data.BUILDINGS[b["type"]]["res"]]["name"].to_lower()
 	return "%s at %s" % [Data.JOBS[job]["verb"], Data.BUILDINGS[b["type"]]["name"]]
+
+
+const MOOD_TEXT := {"happy": "Happy", "okay": "Peckish", "hungry": "Hungry"}
+const MOOD_COL := {"happy": Color("#3f8f4f"), "okay": Color("#c27c2c"), "hungry": Color("#c2413e")}
+
+
+func _mood_label(p: Dictionary, size: int = 14) -> Label:
+	var m := Game.mood(p)
+	var pct := int(round((float(Data.MOOD_SPEED[m]) - 1.0) * 100.0))
+	var txt: String = MOOD_TEXT[m]
+	if pct != 0:
+		txt += "  (%s%d%% speed)" % ["+" if pct > 0 else "", pct]
+	return _label(txt, size, MOOD_COL[m])
 
 
 func open_pets() -> void:
@@ -1084,7 +1153,7 @@ func _pet_card(p: Dictionary) -> Control:
 	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(nm)
-	var st := _label("Lv %d  ·  %s" % [int(p["level"]), Data.stage_name(int(p["level"]))], 14, SUBTLE)
+	var st := _label("Lv %d  ·  %s  ·  %s" % [int(p["level"]), Data.stage_name(int(p["level"])), MOOD_TEXT[Game.mood(p)]], 14, MOOD_COL[Game.mood(p)] if Game.mood(p) != "happy" else SUBTLE)
 	st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(st)
 	var job_row := _hbox(4)
@@ -1163,6 +1232,16 @@ func open_pet(pid: int) -> void:
 	xb.value = 1 if lvl >= Data.MAX_LEVEL else int(p["xp"])
 	left.add_child(xb)
 	left.add_child(_label("Fully grown!" if lvl >= Data.MAX_LEVEL else "%d / %d xp" % [int(p["xp"]), Data.xp_needed(lvl)], 14, SUBTLE))
+	var food_row := _hbox(8)
+	food_row.add_child(_label("Food", 15))
+	var food_bar := _bar(Color("#ffb347"), 150, 12)
+	food_bar.max_value = 1.0
+	food_bar.step = 0.01
+	food_bar.value = float(p.get("food", 1.0))
+	food_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	food_row.add_child(food_bar)
+	left.add_child(food_row)
+	left.add_child(_mood_label(p, 14))
 	left.add_child(_label("Feed a treat", 17))
 	var feed := _hbox(6)
 	for food in ["berries", "fish"]:
@@ -1404,7 +1483,9 @@ func open_help() -> void:
 
 [b]Grow the town.[/b] Place buildings from the [b]Build[/b] menu. Houses make room for more pets. Upgrade the [b]Town Hall[/b] to push the border out towards the lake and the crystal hills. Decorations add [b]charm[/b], which boosts everything.
 
-[b]You can help.[/b] Walk up to trees, rocks, bushes or water and hold the action button to gather by hand, or help build.
+[b]You can help.[/b] Walk up to trees, rocks, bushes or water and hold the action button to gather by hand, or help build. Each one runs out after a few pickings and grows back after a few minutes, faster near a Planted Tree.
+
+[b]Food and storage.[/b] Pets eat berries and fish from your stores by themselves. Well-fed pets work faster, hungry ones slow down. Decorations near a workplace cheer its workers up too. Each resource has a storage limit: when a store is full, its workers pause, so build a Storehouse or sell extras at the Market.
 
 Pets keep working while the game is closed (up to 8 hours).
 

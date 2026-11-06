@@ -14,9 +14,10 @@ signal goal_done(index: int)
 signal egg_found(egg: Dictionary)
 signal welcome_back(report: Dictionary)
 signal settings_changed
+signal node_changed(cell: Vector2i)
 
 const SAVE_PATH := "user://driftnest_save.json"
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 
 var res: Dictionary = {}
 var pets: Array = []
@@ -37,6 +38,11 @@ var running := true
 var simulating := false
 
 var _house_t := 0.0
+## Natural resources that have been gathered from: cell -> units left, and cell -> seconds until regrown.
+var node_stock: Dictionary = {}
+var node_regrow: Dictionary = {}
+var _decor_cache: Dictionary = {}
+var _hunger_toast_t := 0.0
 var _dirty := false
 var _save_timer := 0.0
 var _goal_timer := 0.0
@@ -119,6 +125,8 @@ func new_game() -> void:
 
 ## A brand-new town in memory (no saving, no signals).
 func _fresh_state() -> void:
+	node_stock = {}
+	node_regrow = {}
 	res = {"glimmer": 50, "wood": 25, "stone": 10, "berries": 6, "fish": 0, "crystal": 0}
 	pets = []
 	eggs = []
@@ -295,8 +303,157 @@ func spend(cost: Dictionary) -> void:
 		res[r] = int(res.get(r, 0)) - int(cost[r])
 
 
-func gain(r: String, n: int) -> void:
-	res[r] = int(res.get(r, 0)) + n
+## Add a resource, up to the storage limit (never removes anything already over it).
+## Returns how much actually went in.
+func gain(r: String, n: int) -> int:
+	var have := int(res.get(r, 0))
+	var cap := storage_cap(r)
+	var room := maxi(0, cap - have)
+	var added := mini(n, room) if n > 0 else n
+	res[r] = have + added
+	return added
+
+
+func storage_cap(r: String) -> int:
+	if not Data.STORAGE_BASE.has(r):
+		return 1 << 30
+	return int(Data.STORAGE_BASE[r]) + int(Data.STORAGE_PER_TOWN_LEVEL[r]) * (town_level - 1) \
+		+ int(Data.STORAGE_PER_STOREHOUSE[r]) * buildings_of("storehouse").size()
+
+
+func is_full(r: String) -> bool:
+	return int(res.get(r, 0)) >= storage_cap(r)
+
+
+# ---------------------------------------------------------------- natural resources
+
+func node_kind(cell: Vector2i) -> String:
+	if map.nodes.has(cell):
+		return str(map.nodes[cell])
+	if map.water.has(cell):
+		return "water"
+	return ""
+
+
+func node_left(cell: Vector2i) -> int:
+	if node_regrow.has(cell):
+		return 0
+	var kind := node_kind(cell)
+	if kind == "":
+		return 0
+	return int(node_stock.get(cell, Data.NODES[kind]["stock"]))
+
+
+## 0 = full, 1 = just emptied, 2 = growing back (past halfway).
+func node_stage(cell: Vector2i) -> int:
+	if not node_regrow.has(cell):
+		return 0
+	var kind := node_kind(cell)
+	var total := float(Data.NODES[kind]["regrow"])
+	return 2 if float(node_regrow[cell]) < total * 0.5 else 1
+
+
+func _regrow_mult(cell: Vector2i) -> float:
+	for b in buildings:
+		if b["type"] == "sapling" and bool(b["built"]):
+			var d: Vector2i = b["cell"] - cell
+			if absi(d.x) <= Data.SAPLING_RADIUS and absi(d.y) <= Data.SAPLING_RADIUS:
+				return Data.SAPLING_REGROW_MULT
+	return 1.0
+
+
+func _tick_nodes(dt: float) -> void:
+	if node_regrow.is_empty():
+		return
+	for cell in node_regrow.keys():
+		var before := node_stage(cell)
+		node_regrow[cell] = float(node_regrow[cell]) - dt * _regrow_mult(cell)
+		if float(node_regrow[cell]) <= 0.0:
+			node_regrow.erase(cell)
+			node_stock.erase(cell)
+			if not simulating:
+				node_changed.emit(cell)
+		elif node_stage(cell) != before and not simulating:
+			node_changed.emit(cell)
+
+
+## The Keeper gathering by hand. Returns the resource gained, or "empty" / "full" / "".
+func keeper_gather_at(cell: Vector2i) -> String:
+	var kind := node_kind(cell)
+	if kind == "":
+		return ""
+	var left := node_left(cell)
+	if left <= 0:
+		return "empty"
+	var r: String = Data.NODES[kind]["res"]
+	if is_full(r):
+		return "full"
+	gain(r, 1)
+	left -= 1
+	if left <= 0:
+		node_stock.erase(cell)
+		node_regrow[cell] = float(Data.NODES[kind]["regrow"])
+	else:
+		node_stock[cell] = left
+	node_changed.emit(cell)
+	var e := carried_egg()
+	if not e.is_empty():
+		e["warmth"] = minf(float(Data.EGGS[e["type"]]["warmth"]), float(e["warmth"]) + 1.0)
+	mark_dirty()
+	return r
+
+
+# ---------------------------------------------------------------- food and mood
+
+func mood(p: Dictionary) -> String:
+	var f := float(p.get("food", 1.0))
+	if f >= Data.EAT_BELOW:
+		return "happy"
+	if f >= 0.2:
+		return "okay"
+	return "hungry"
+
+
+## Extra speed from decorations placed near a workplace.
+func decor_bonus(b: Dictionary) -> float:
+	var bid := int(b["id"])
+	if _decor_cache.has(bid):
+		return float(_decor_cache[bid])
+	var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+	var area := Rect2i(b["cell"] - Vector2i(Data.DECOR_RADIUS, Data.DECOR_RADIUS), size + Vector2i(Data.DECOR_RADIUS * 2, Data.DECOR_RADIUS * 2))
+	var charm_near := 0
+	for o in buildings:
+		if bool(o["built"]) and area.has_point(o["cell"]):
+			charm_near += int(Data.BUILDINGS[o["type"]].get("charm", 0))
+	var bonus := minf(float(charm_near) * Data.DECOR_BONUS_PER_CHARM, Data.DECOR_BONUS_MAX)
+	_decor_cache[bid] = bonus
+	return bonus
+
+
+func _eat(p: Dictionary) -> void:
+	while float(p["food"]) < Data.EAT_UP_TO:
+		var food := ""
+		if int(res.get("berries", 0)) > 0:
+			food = "berries"
+		elif int(res.get("fish", 0)) > 0:
+			food = "fish"
+		if food == "":
+			return
+		res[food] = int(res[food]) - 1
+		p["food"] = minf(1.0, float(p["food"]) + float(Data.FOOD_FILL[food]))
+
+
+## Is this pet actually producing right now (not idle, not paused)?
+func is_working(p: Dictionary) -> bool:
+	var b := find_building(int(p["work"]))
+	if b.is_empty() or not bool(b["built"]):
+		return false
+	var job: String = Data.BUILDINGS[b["type"]].get("job", "")
+	if job == "" or pet_job(p) != job:
+		return false
+	if job == "building":
+		return not construction_target().is_empty()
+	return str(p.get("waiting", "")) == ""
 
 
 func egg_ratio(e: Dictionary) -> float:
@@ -317,6 +474,9 @@ func work_interval(p: Dictionary, b: Dictionary) -> float:
 		mult *= float(Data.TIERS[int(t["tier"])]["mult"])
 	if has_talent(p, job):
 		mult *= Data.TALENT_MULT
+	mult *= float(Data.MOOD_SPEED[mood(p)]) * (1.0 + decor_bonus(b))
+	if job == "exploring":
+		mult = minf(mult, Data.EXPLORE_MAX_SPEED) # trips can't get shorter than this
 	return float(Data.JOBS[job]["time"]) * float(info.get("time_mult", 1.0)) / mult
 
 
@@ -331,7 +491,16 @@ func construction_target() -> Dictionary:
 
 func tick(dt: float) -> void:
 	_warm_eggs(dt)
+	_tick_nodes(dt)
+	_decor_cache.clear()
+	var someone_hungry := false
 	for p in pets:
+		# hunger first: working pets get hungry faster, and eat from storage on their own
+		p["food"] = maxf(0.0, float(p.get("food", 1.0)) - dt * (Data.HUNGER_WORKING if is_working(p) else Data.HUNGER_IDLE))
+		if float(p["food"]) < Data.EAT_BELOW:
+			_eat(p)
+		if mood(p) == "hungry":
+			someone_hungry = true
 		var bid := int(p["work"])
 		if bid == -1:
 			continue
@@ -344,6 +513,13 @@ func tick(dt: float) -> void:
 		if job == "building" and construction_target().is_empty():
 			p["t"] = 0.0
 			continue
+		# a full store pauses the workers who fill it
+		var out: String = Data.BUILDINGS[b["type"]].get("res", "")
+		if out != "" and is_full(out):
+			p["waiting"] = "full"
+			p["t"] = 0.0
+			continue
+		p["waiting"] = ""
 		var interval := work_interval(p, b)
 		p["t"] = float(p.get("t", 0.0)) + dt
 		var guard := 0
@@ -360,6 +536,10 @@ func tick(dt: float) -> void:
 		while _house_t >= Data.HOUSE_GLIMMER_TIME:
 			_house_t -= Data.HOUSE_GLIMMER_TIME
 			gain("glimmer", 1)
+	_hunger_toast_t = maxf(0.0, _hunger_toast_t - dt)
+	if someone_hungry and _hunger_toast_t <= 0.0 and not simulating and int(res.get("berries", 0)) == 0 and int(res.get("fish", 0)) == 0:
+		_hunger_toast_t = 300.0
+		toast.emit("Your pets are hungry and working slowly! Pick berries or build a Berry Farm.")
 	_goal_timer += dt
 	if _goal_timer > 0.5:
 		_goal_timer = 0.0
@@ -379,7 +559,8 @@ func _work_unit(p: Dictionary, b: Dictionary, job: String) -> void:
 			_explore_trip(p, b)
 		_:
 			var r: String = info["res"]
-			gain(r, 1)
+			if gain(r, 1) <= 0:
+				return
 			if not simulating:
 				produced.emit(int(p["id"]), int(b["id"]), r, 1)
 	_give_xp(p, int(Data.JOBS[job]["xp"]))
@@ -390,7 +571,7 @@ func _work_unit(p: Dictionary, b: Dictionary, job: String) -> void:
 
 func _explore_trip(p: Dictionary, b: Dictionary) -> void:
 	stats["trips"] = int(stats.get("trips", 0)) + 1
-	var g := rng.randi_range(8, 20) + int(skill(p, "exploring")["lvl"]) * 2
+	var g := rng.randi_range(5, 12) + int(skill(p, "exploring")["lvl"])
 	gain("glimmer", g)
 	var r: String = ["wood", "stone", "berries", "fish"][rng.randi_range(0, 3)]
 	var n := rng.randi_range(3, 8)
@@ -488,7 +669,7 @@ func _hatch(e: Dictionary) -> void:
 	eggs.erase(e)
 	var sid := roll_species(str(e["type"]))
 	var pet := {"id": _new_id(), "species": sid, "level": 1, "xp": 0, "prism": rng.randf() < Data.PRISM_CHANCE,
-		"tool": -1, "work": -1, "skills": {}, "t": 0.0}
+		"tool": -1, "work": -1, "skills": {}, "t": 0.0, "food": 1.0}
 	pets.append(pet)
 	var is_new := not discovered.has(sid)
 	discovered[sid] = true
@@ -735,6 +916,7 @@ func feed(pid: int, food: String) -> bool:
 		toast.emit("%s is already fully grown!" % pet_name(p))
 		return false
 	res[food] = int(res[food]) - 1
+	p["food"] = minf(1.0, float(p.get("food", 1.0)) + float(Data.FOOD_FILL[food]))
 	_give_xp(p, int(Data.FOOD_XP[food]))
 	stats["fed"] = int(stats.get("fed", 0)) + 1
 	mark_dirty()
@@ -802,25 +984,6 @@ func upgrade_town() -> bool:
 	return true
 
 
-## The Keeper gathering by hand from a natural feature.
-func keeper_gather(kind: String) -> String:
-	var r := ""
-	match kind:
-		"tree": r = "wood"
-		"rock": r = "stone"
-		"bush": r = "berries"
-		"crystal": r = "crystal"
-		"water": r = "fish"
-	if r == "":
-		return ""
-	gain(r, 1)
-	var e := carried_egg()
-	if not e.is_empty():
-		e["warmth"] = minf(float(Data.EGGS[e["type"]]["warmth"]), float(e["warmth"]) + 1.0)
-	mark_dirty()
-	return r
-
-
 # ================================================================ goals
 
 func current_goal() -> Dictionary:
@@ -840,6 +1003,8 @@ func _goal_met(id: String) -> bool:
 		"lumber": return has_built("lumber_camp")
 		"woodcutter": return _anyone_works_at("lumber_camp")
 		"house": return has_built("house")
+		"farm": return _anyone_works_at("berry_farm")
+		"storehouse": return has_built("storehouse")
 		"quarry": return has_built("quarry")
 		"workshop": return has_built("workshop")
 		"craft": return int(stats.get("crafted", 0)) >= 1
@@ -873,7 +1038,11 @@ func _check_goals() -> void:
 		guard += 1
 		var g: Dictionary = Data.GOALS[goal_index]
 		for r in g["reward"]:
-			gain(r, int(g["reward"][r]))
+			if r == "egg":
+				var loc := "carry" if carried_egg().is_empty() else ("nest" if eggs_at("nest").size() < nest_slots() else "bag")
+				_add_egg(str(g["reward"][r]), loc)
+			else:
+				gain(r, int(g["reward"][r]))
 		goal_index += 1
 		if not simulating:
 			goal_done.emit(goal_index - 1)
@@ -908,6 +1077,7 @@ func _to_dict() -> Dictionary:
 		"res": res, "pets": pets, "eggs": eggs, "tools": tools, "buildings": bl,
 		"town_level": town_level, "discovered": discovered.keys(), "goal_index": goal_index,
 		"stats": stats, "next_id": next_id, "house_t": _house_t,
+		"nodes": _nodes_to_list(),
 	}
 
 
@@ -970,6 +1140,15 @@ func load_game() -> bool:
 	return true
 
 
+func _nodes_to_list() -> Array:
+	var out: Array = []
+	for cell in node_stock:
+		out.append([cell.x, cell.y, int(node_stock[cell]), 0.0])
+	for cell in node_regrow:
+		out.append([cell.x, cell.y, 0, float(node_regrow[cell])])
+	return out
+
+
 func _from_dict(d: Dictionary) -> void:
 	res = {}
 	for r in Data.RESOURCES:
@@ -984,7 +1163,8 @@ func _from_dict(d: Dictionary) -> void:
 				skills[job] = {"lvl": int(p["skills"][job]["lvl"]), "xp": float(p["skills"][job]["xp"])}
 		pets.append({"id": int(p["id"]), "species": str(p["species"]), "level": clampi(int(p.get("level", 1)), 1, Data.MAX_LEVEL),
 			"xp": int(p.get("xp", 0)), "prism": bool(p.get("prism", false)), "tool": int(p.get("tool", -1)),
-			"work": int(p.get("work", -1)), "skills": skills, "t": float(p.get("t", 0.0))})
+			"work": int(p.get("work", -1)), "skills": skills, "t": float(p.get("t", 0.0)),
+			"food": clampf(float(p.get("food", 1.0)), 0.0, 1.0)})
 	eggs = []
 	for e in d.get("eggs", []):
 		if Data.EGGS.has(str(e.get("type", ""))):
@@ -1010,6 +1190,16 @@ func _from_dict(d: Dictionary) -> void:
 	stats = d.get("stats", {})
 	next_id = int(d.get("next_id", 1))
 	_house_t = float(d.get("house_t", 0.0))
+	node_stock = {}
+	node_regrow = {}
+	for n in d.get("nodes", []):
+		var cell := Vector2i(int(n[0]), int(n[1]))
+		if node_kind(cell) == "":
+			continue
+		if float(n[3]) > 0.0:
+			node_regrow[cell] = float(n[3])
+		elif int(n[2]) > 0:
+			node_stock[cell] = int(n[2])
 
 
 ## Version 1 was the sky-island prototype: one companion, chores, no town.
@@ -1049,6 +1239,25 @@ func _migrate_1(old: Dictionary) -> Dictionary:
 	d["next_id"] = top_id
 	d["time"] = Time.get_unix_time_from_system()
 	migration_note = "Driftnest has grown into a town! Your %d pet(s) and their eggs moved in with you. Tap a pet to give it a job." % new_pets.size()
+	return d
+
+
+## Version 2 -> 3: pets now get hungry (start them full), resources deplete (start everything
+## full), and two goals were added, so keep each player on the goal they had reached.
+func _migrate_2(d: Dictionary) -> Dictionary:
+	for p in d.get("pets", []):
+		p["food"] = 1.0
+	d["nodes"] = []
+	var old_ids := ["hatch", "builder", "lumber", "woodcutter", "house", "quarry", "workshop", "craft", "feed", "egg",
+		"town2", "dock", "charm", "level5", "explore", "dex8", "town3", "crystal"]
+	var gi := int(d.get("goal_index", 0))
+	if gi >= old_ids.size():
+		d["goal_index"] = Data.GOALS.size()
+	else:
+		for i in Data.GOALS.size():
+			if Data.GOALS[i]["id"] == old_ids[gi]:
+				d["goal_index"] = i
+				break
 	return d
 
 

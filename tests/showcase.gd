@@ -115,6 +115,11 @@ func _run() -> void:
 		main.hud.close_modal()
 		await _frames(2)
 	await _frames(20)
+	var fill := {"wood": 0.62, "stone": 0.35, "berries": 0.8, "fish": 1.0, "crystal": 0.2}
+	for r in fill:
+		Game.res[r] = int(Game.storage_cap(r) * fill[r])
+	Game.res["glimmer"] = 1840
+	Game.changed.emit()
 	await _measure("all")
 	var props: Array = main.ysort.get_children().filter(func(c): return c is NatureProp)
 	var t1 := Time.get_ticks_usec()
@@ -126,6 +131,17 @@ func _run() -> void:
 		get_tree().quit()
 		return
 	await _shot("s1_town")
+	# empty a few trees and rocks near town so the stumps / regrowth show up
+	var near: Array = []
+	for c in Game.map.nodes:
+		if Game.map.nodes[c] in ["tree", "rock", "bush"]:
+			near.append(c)
+	near.sort_custom(func(x, y): return (Vector2(x) - WorldMap.CENTER).length() < (Vector2(y) - WorldMap.CENTER).length())
+	for i in mini(8, near.size()):
+		var kind := Game.node_kind(near[i])
+		var total := float(Data.NODES[kind]["regrow"])
+		Game.node_regrow[near[i]] = total * (0.9 if i % 2 == 0 else 0.3)
+		Game.node_changed.emit(near[i])
 	main.zoom_level = 1.1
 	main._apply_zoom()
 	main.keeper.position = WorldMap.CENTER * 64.0 + Vector2(40, 260)

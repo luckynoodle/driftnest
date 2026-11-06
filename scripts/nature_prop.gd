@@ -1,16 +1,21 @@
 class_name NatureProp
 extends Node2D
 ## A natural feature on the map (tree, rock, berry bush, crystal) in the storybook-3D style.
-## Origin is its base. Drawn once.
+## Origin is its base. Drawn once, and again when it's gathered empty or grows back.
 
 const OW := 2.6
 
 var kind := "tree"
 var variant := 0.5
+## 0 = full, 1 = gathered empty (stump / rubble / bare bush), 2 = growing back.
+var stage := 0
 
 
 func _draw() -> void:
 	PetArt.fast = true
+	if stage > 0:
+		_depleted()
+		return
 	match kind:
 		"tree":
 			if variant > 0.55:
@@ -86,6 +91,46 @@ func _bush() -> void:
 	for p in [Vector2(-16, -20), Vector2(-3, -34), Vector2(11, -24), Vector2(18, -12), Vector2(-7, -12)]:
 		PetArt.blob(self, id, p, Vector2(4.6, 4.6), Color("#5b4cf0"), 0.0, 1.4, false)
 		draw_circle(id * (p + Vector2(-1.4, -1.4)), 1.5 * k, Color(1, 1, 1, 0.9))
+
+
+func _depleted() -> void:
+	var k := 0.8 + variant * 0.4
+	var id := Transform2D(0.0, Vector2(k, k), 0.0, Vector2.ZERO)
+	var growing := stage == 2
+	match kind:
+		"tree":
+			# a stump, with a sapling coming up once it's growing back
+			PetArt.soft(self, Vector2(2, 0), Vector2(20, 6) * k, 0.35)
+			PetArt.shape(self, id, [Vector2(-10, 0), Vector2(-9, -14), Vector2(9, -14), Vector2(10, 0)], Color("#9a6440"), OW)
+			PetArt.blob(self, id, Vector2(0, -14), Vector2(9.5, 4.5), Color("#e8c99a"), 0.0, OW * 0.8, false)
+			draw_arc(id * Vector2(0, -14), 4.0 * k, 0.0, TAU, 12, Color("#c09a6b"), 1.4, true)
+			for c in [Vector2(-18, -2), Vector2(15, 1), Vector2(-9, 4)]:
+				PetArt.ell(self, id, c, Vector2(3.5, 1.6), Color("#d9b27a"), 0.4)
+			if growing:
+				draw_line(id * Vector2(14, -2), id * Vector2(16, -24), PetArt.INK, 4.0, true)
+				draw_line(id * Vector2(14, -2), id * Vector2(16, -24), Color("#6e4126"), 2.0, true)
+				PetArt.blob(self, id, Vector2(16, -30), Vector2(10, 9), Color("#6cbd5a"), 0.0, 2.0, true, 1.2)
+		"rock":
+			PetArt.soft(self, Vector2(2, 0), Vector2(22, 6) * k, 0.3)
+			var n := 5 if growing else 3
+			for i in n:
+				var p := Vector2(-14 + 7 * i, -4 - 3 * (i % 2))
+				PetArt.blob(self, id, p, Vector2(5.5, 4.0) * (1.25 if growing else 1.0), Color("#aab4be"), 0.0, 1.8, false, 1.2)
+		"bush":
+			PetArt.soft(self, Vector2.ZERO, Vector2(26, 7) * k, 0.35)
+			for b in [[-12, -13, 14], [12, -13, 14], [0, -22, 16]]:
+				PetArt.blob(self, id, Vector2(b[0], b[1]), Vector2(b[2], b[2]), Color("#6a9e5a"), 0.0, OW, true, 1.1)
+			if growing:
+				for p in [Vector2(-10, -16), Vector2(6, -24), Vector2(12, -10)]:
+					PetArt.blob(self, id, p, Vector2(3.4, 3.4), Color("#a5d36a"), 0.0, 1.2, false)
+		"crystal":
+			PetArt.soft(self, Vector2.ZERO, Vector2(24, 7) * k, 0.3)
+			PetArt.shape(self, id, [Vector2(-24, 0), Vector2(-20, -10), Vector2(0, -14), Vector2(20, -10), Vector2(24, 0)], Color("#8a8f96"), OW)
+			var h := 18.0 if growing else 7.0
+			for x: float in [-8.0, 6.0]:
+				var pts := PackedVector2Array([id * Vector2(x - 4, -10), id * Vector2(x, -10 - h), id * Vector2(x + 4, -10)])
+				PetArt.outline(self, pts, 1.8)
+				draw_colored_polygon(pts, Color("#b9a3d6") if growing else Color("#9c94a8"))
 
 
 func _crystal() -> void:

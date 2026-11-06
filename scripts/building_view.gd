@@ -443,6 +443,20 @@ func _draw_type(sz: Vector2) -> void:
 			draw_line(Vector2(0, -104), Vector2(0, -82), INK, 2.0)
 			_box(Vector2(-8, -70), 16, 12, Vector2(5, -5), Color("#b8c0c8"))
 			_sign(Vector2(-48, -112), "pickaxe")
+		"storehouse":
+			var d10 := Vector2(26, -28)
+			_cast(Vector2(0, -16), 110, 150)
+			var hp5 := _house(-54, -16, 92, 66, d10, Color("#c98b5a"), Color("#6b8f4a"), 40)
+			# big barn doors
+			_front(_pv([Vector2(-30, -16), Vector2(14, -16), Vector2(14, -60), Vector2(-30, -60)]), Color("#8b5e3c"))
+			draw_line(Vector2(-8, -16), Vector2(-8, -60), INK, 2.0)
+			draw_line(Vector2(-30, -60), Vector2(-8, -16), Color("#5e3d24"), 3.0)
+			draw_line(Vector2(14, -60), Vector2(-8, -16), Color("#5e3d24"), 3.0)
+			_window(Vector2(26, -44), Vector2(14, 14))
+			# crates and a sack out front
+			_box(Vector2(-60, -2), 20, 16, Vector2(6, -6), Color("#b07a45"))
+			_box(Vector2(34, -2), 18, 14, Vector2(6, -6), Color("#c08a55"))
+			PetArt.blob(self, Transform2D.IDENTITY, Vector2(62, -10), Vector2(10, 12), Color("#e9d7a8"), 0.0, 2.0, false)
 		"workshop":
 			var d6 := Vector2(24, -26)
 			_cast(Vector2(0, -16), 110, 150)

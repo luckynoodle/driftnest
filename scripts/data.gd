@@ -99,6 +99,39 @@ const RES_ORDER := ["wood", "stone", "berries", "fish", "crystal"]
 # Feeding a pet: xp per item
 const FOOD_XP := {"berries": 4, "fish": 12}
 
+# ------------------------------------------------------------------ natural resources
+# Trees, rocks, bushes, crystal outcrops and water hold a few units for hand-gathering.
+# Empty ones show a stump / rubble / bare bush and regrow after `regrow` seconds
+# (twice as fast within SAPLING_RADIUS tiles of a Planted Tree).
+const NODES := {
+	"tree": {"res": "wood", "stock": 5, "regrow": 180.0, "verb": "Chop wood"},
+	"rock": {"res": "stone", "stock": 4, "regrow": 300.0, "verb": "Mine stone"},
+	"bush": {"res": "berries", "stock": 4, "regrow": 120.0, "verb": "Pick berries"},
+	"crystal": {"res": "crystal", "stock": 2, "regrow": 600.0, "verb": "Mine crystal"},
+	"water": {"res": "fish", "stock": 3, "regrow": 150.0, "verb": "Catch fish"},
+}
+const SAPLING_REGROW_MULT := 2.0
+const SAPLING_RADIUS := 3
+
+# ------------------------------------------------------------------ storage
+# How much of each resource the town can hold. Glimmer has no limit.
+const STORAGE_BASE := {"wood": 300, "stone": 300, "berries": 200, "fish": 150, "crystal": 60}
+const STORAGE_PER_TOWN_LEVEL := {"wood": 200, "stone": 200, "berries": 100, "fish": 75, "crystal": 40}
+const STORAGE_PER_STOREHOUSE := {"wood": 400, "stone": 400, "berries": 250, "fish": 150, "crystal": 80}
+
+# ------------------------------------------------------------------ food and mood
+# Pets get hungry (fullness 1 -> 0) and eat berries or fish from storage on their own.
+const HUNGER_WORKING := 1.0 / 600.0 # full to empty in 10 minutes of work
+const HUNGER_IDLE := 1.0 / 1500.0
+const EAT_BELOW := 0.5 # a pet eats when fullness drops under this...
+const EAT_UP_TO := 0.75 # ...until it reaches this
+const FOOD_FILL := {"berries": 0.2, "fish": 0.5}
+const MOOD_SPEED := {"happy": 1.15, "okay": 1.0, "hungry": 0.6}
+const DECOR_BONUS_PER_CHARM := 0.03 # charm placed near a workplace cheers its workers
+const DECOR_BONUS_MAX := 0.15
+const DECOR_RADIUS := 4
+const EXPLORE_MAX_SPEED := 2.0 # an explorer trip never takes less than half the base 45 s
+
 # ------------------------------------------------------------------ jobs & tools
 
 # time = seconds per unit for a skill-1 pet with a Wooden tool.
@@ -152,6 +185,8 @@ const BUILDINGS := {
 	"quarry": {"name": "Quarry", "size": Vector2i(2, 2), "cost": {"wood": 35}, "work": 45, "th": 1,
 		"job": "mining", "res": "stone", "slots": 2, "need": "rock", "need_n": 2,
 		"desc": "Pets with a pickaxe dig stone. Must be near at least 2 rocks."},
+	"storehouse": {"name": "Storehouse", "size": Vector2i(2, 2), "cost": {"wood": 60, "stone": 40}, "work": 60, "th": 1,
+		"desc": "Holds more of everything: +400 wood and stone, +250 berries, +150 fish, +80 crystal."},
 	"workshop": {"name": "Workshop", "size": Vector2i(2, 2), "cost": {"wood": 70, "stone": 40}, "work": 90, "th": 1,
 		"desc": "Craft tools for your pets. Better tools mean faster work."},
 	"market": {"name": "Market", "size": Vector2i(2, 2), "cost": {"wood": 60, "stone": 45}, "work": 90, "th": 1,
@@ -179,11 +214,11 @@ const BUILDINGS := {
 		"desc": "+15 charm. A monument to your best friends."},
 }
 
-const BUILD_ORDER := ["house", "lumber_camp", "berry_farm", "quarry", "workshop", "market", "fishing_dock",
+const BUILD_ORDER := ["house", "storehouse", "lumber_camp", "berry_farm", "quarry", "workshop", "market", "fishing_dock",
 	"explorer_lodge", "crystal_mine", "path", "flower_bed", "sapling", "lamp", "fountain", "statue"]
 
 ## Each extra copy of a building costs this much more than the previous one.
-const COST_GROWTH := {"house": 1.4, "default": 1.5}
+const COST_GROWTH := {"house": 1.4, "storehouse": 1.3, "default": 1.5}
 
 const HOUSE_CAPACITY := 2
 const BASE_CAPACITY := 2
@@ -193,10 +228,10 @@ const OFFLINE_CAP := 8.0 * 3600.0
 # Town Hall: radius = town border in tiles from the centre
 const TOWN_LEVELS := [
 	{"radius": 10.0, "cost": {}},
-	{"radius": 14.0, "cost": {"wood": 250, "stone": 180, "glimmer": 350}},
+	{"radius": 14.0, "cost": {"wood": 300, "stone": 250, "glimmer": 450}},
 	{"radius": 18.5, "cost": {"wood": 700, "stone": 550, "fish": 80, "glimmer": 1200}},
 	{"radius": 23.0, "cost": {"wood": 1500, "stone": 1200, "crystal": 80, "glimmer": 1800}},
-	{"radius": 28.0, "cost": {"wood": 3000, "stone": 2500, "crystal": 250, "glimmer": 4500}},
+	{"radius": 28.0, "cost": {"wood": 2400, "stone": 2000, "crystal": 250, "glimmer": 4500}},
 ]
 
 # ------------------------------------------------------------------ goals (tutorial chain)
@@ -206,13 +241,15 @@ const GOALS := [
 	{"id": "builder", "text": "Tap a pet, give it the Hammer and send it to the Builder's Hut", "reward": {"wood": 10}},
 	{"id": "lumber", "text": "Build a Lumber Camp next to the forest (Build menu)", "reward": {"glimmer": 20}},
 	{"id": "woodcutter", "text": "Give a pet the Axe and put it to work at the Lumber Camp", "reward": {"stone": 10}},
-	{"id": "house", "text": "Build a House so more pets can live in town", "reward": {"glimmer": 30}},
+	{"id": "house", "text": "Build a House so more pets can live in town", "reward": {"glimmer": 30, "egg": "meadow"}},
+	{"id": "farm", "text": "Build a Berry Farm and send a pet with the Basket to forage. Pets need food!", "reward": {"glimmer": 20}},
 	{"id": "quarry", "text": "Build a Quarry by the rocks to the north", "reward": {"wood": 20}},
 	{"id": "workshop", "text": "Build a Workshop", "reward": {"glimmer": 30}},
 	{"id": "craft", "text": "Craft a tool at the Workshop", "reward": {"berries": 10}},
 	{"id": "feed", "text": "Feed a pet some berries", "reward": {"glimmer": 20}},
 	{"id": "egg", "text": "Buy an egg at the Egg Kiosk", "reward": {"wood": 20, "stone": 20}},
 	{"id": "town2", "text": "Upgrade the Town Hall to grow your town", "reward": {"glimmer": 60}},
+	{"id": "storehouse", "text": "Build a Storehouse to hold more of everything", "reward": {"glimmer": 40}},
 	{"id": "dock", "text": "Build a Fishing Dock on the lake shore", "reward": {"glimmer": 40}},
 	{"id": "charm", "text": "Decorate until your town has 10 charm", "reward": {"glimmer": 80}},
 	{"id": "level5", "text": "Raise a pet to level 5", "reward": {"glimmer": 100}},
@@ -253,6 +290,8 @@ static func cost_text(cost: Dictionary) -> String:
 	for r in ["glimmer"] + RES_ORDER:
 		if cost.has(r):
 			parts.append("%d %s" % [int(cost[r]), RESOURCES[r]["name"].to_lower()])
+	if cost.has("egg"):
+		parts.append("a " + str(EGGS[cost["egg"]]["name"]))
 	return ", ".join(parts) if not parts.is_empty() else "free"
 
 

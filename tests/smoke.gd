@@ -229,10 +229,54 @@ func _run() -> void:
 	_check(int(Game.skill(p1, "building")["lvl"]) <= int(p1["level"]), "skill capped by pet level")
 	_check(Game.charm() >= 4, "decorations add charm")
 
+	# --- storage limits
+	var wcap := Game.storage_cap("wood")
+	Game.res["wood"] = wcap - 3
+	_check(Game.gain("wood", 50) == 3 and int(Game.res["wood"]) == wcap, "storage stops at its limit")
+	var cap_before := Game.storage_cap("stone")
+	var sh := _place("storehouse")
+	if not sh.is_empty():
+		Game.add_build_progress(sh, 999)
+	_check(Game.storage_cap("stone") > cap_before, "storehouse raises the limit")
+	Game.res["wood"] = Game.storage_cap("wood")
+	Game.tick(1.0)
+	var paused := false
+	for p in Game.pets:
+		if str(p.get("waiting", "")) == "full":
+			paused = true
+	_check(paused, "worker waits when its store is full")
+
+	# --- natural resources run out and grow back
+	var rock := Vector2i(-1, -1)
+	for c in Game.map.nodes:
+		if Game.map.nodes[c] == "rock":
+			rock = c
+			break
+	Game.res["stone"] = 0
+	var got := 0
+	while Game.keeper_gather_at(rock) == "stone":
+		got += 1
+	_check(got == int(Data.NODES["rock"]["stock"]), "a rock gives a few stones")
+	_check(Game.keeper_gather_at(rock) == "empty" and Game.node_left(rock) == 0, "an empty rock gives nothing")
+	Game.simulate(float(Data.NODES["rock"]["regrow"]) + 5.0)
+	_check(Game.node_left(rock) == int(Data.NODES["rock"]["stock"]), "the rock grows back")
+
+	# --- food and mood
+	var hp: Dictionary = Game.pets[0]
+	hp["food"] = 0.05
+	_check(Game.mood(hp) == "hungry", "an unfed pet is hungry")
+	Game.res["berries"] = 20
+	Game.tick(0.1)
+	_check(float(hp["food"]) >= Data.EAT_UP_TO and Game.mood(hp) == "happy", "a hungry pet eats from the store")
+	_check(int(Game.res["berries"]) < 20, "eating uses up berries")
+
 	# --- offline progress
-	var before := Game.res.duplicate()
+	Game.res["wood"] = 0
+	Game.res["stone"] = 0
+	Game.res["berries"] = 150
 	var rep := Game.simulate(3600)
-	_check(int(Game.res["wood"]) > int(before["wood"]) and int(Game.res["stone"]) > int(before["stone"]), "offline hour gathers wood and stone")
+	_check(int(Game.res["wood"]) > 0 and int(Game.res["stone"]) > 0, "offline hour gathers wood and stone")
+	_check(int(Game.res["wood"]) <= Game.storage_cap("wood"), "offline gathering respects storage")
 	_check(int(Game.stats.get("trips", 0)) > 0, "explorers made trips")
 	_check(rep.has("gains"), "offline report built")
 	main._sync()
@@ -332,6 +376,17 @@ func _save_tests() -> void:
 	_check(Game.migration_note != "", "migration note for the player")
 	Game.save_game()
 	_check(int(Game._read_json(Game.SAVE_PATH)["version"]) == Game.SAVE_VERSION, "upgraded save written at the current version")
+	# 1b) a version-2 save (before food and gathering limits) gets fed pets, full nodes and the right goal
+	var v2 := Game._to_dict()
+	v2["version"] = 2
+	v2.erase("nodes")
+	for p in v2["pets"]:
+		p.erase("food")
+	v2["goal_index"] = 11 # "dock" in the old 18-goal list
+	_write(Game.SAVE_PATH, JSON.stringify(v2))
+	_check(Game.load_game(), "v2 save loads through migration")
+	_check(float(Game.pets[0].get("food", 0.0)) >= 1.0 and Game.node_regrow.is_empty(), "v2 pets fed, nodes full")
+	_check(Data.GOALS[Game.goal_index]["id"] == "dock", "v2 goal progress kept")
 	# 2) a save from a newer version is never overwritten
 	var future := {"version": Game.SAVE_VERSION + 1, "secret": "keep me"}
 	_write(Game.SAVE_PATH, JSON.stringify(future))

@@ -1,20 +1,31 @@
 extends Node
 ## Balance check: a bot plays the opening of the game at simulated speed, the way a sensible
-## new player would (follows the goals, hires pets, builds, crafts, sells extras), and prints
-## when each milestone lands. Run:
+## new player would (follows the goals, hires pets, builds, crafts, feeds, sells extras), and
+## prints when each milestone lands. It gathers by hand on real trees, rocks and bushes:
+## walking between them, waiting for them to regrow, and stopping when a store is full.
 ##   godot --headless --path . -- --balance [--minutes=120]
-## Targets come from the Next Steps Plan: first hatch < 1 min, first new building < 5 min,
-## Town Hall 2 in 30-45 min.
+## Two players are simulated:
+##   typical  - hands-on at first, then lets the pets work. Must hit the plan's targets:
+##              first hatch < 1 min, first new building < 5 min, Town Hall 2 in 30-45 min.
+##   grinder  - holds the gather button non-stop for the first 30 minutes. Hand-gathering must
+##              not skip the game: Town Hall 2 no sooner than 20 min.
 
 const STEP := 0.5
-const KEEPER_EVERY := 3.0 # the player gathers by hand about once every 3 s (walking and menus included)
+const WALK_SPEED := 330.0 # px per second, same as the Keeper
 
 var main = null
 var t := 0.0
 var log_rows: Array = []
-var _keeper_t := 0.0
 var _milestones := {}
 var _off := 0
+var _profile := "typical"
+# hand-gathering state
+var _pos := WorldMap.CENTER
+var _cell := Vector2i(-1, -1)
+var _walk_left := 0.0
+var _hand_t := 0.0
+var _hand_count := 0
+var _hungry_secs := 0.0
 
 
 func _ready() -> void:
@@ -37,77 +48,151 @@ func _run() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--minutes="):
 			minutes = int(arg.substr(10))
-	Game.reset_save()
 	Game.running = false
-	Game.goal_done.connect(func(i): _mark("goal%d" % i, "Goal %d done: %s" % [i + 1, Data.GOALS[i]["text"]]))
+	Game.goal_done.connect(func(i): _mark("goal_" + str(Data.GOALS[i]["id"]), "Goal %d done: %s" % [i + 1, Data.GOALS[i]["text"]]))
 	Game.hatched.connect(func(p, _new): _mark("hatch%d" % Game.pets.size(), "Pet #%d hatched (%s)" % [Game.pets.size(), Data.SPECIES[p["species"]]["name"]]))
 	Game.building_done.connect(func(b): _mark("built_" + str(b["type"]), "First %s finished" % Data.BUILDINGS[b["type"]]["name"]))
+	for profile in ["typical", "grinder"]:
+		_play(profile, minutes)
+	Game.reset_save()
+	print("BALANCE OK" if _off == 0 else "BALANCE OFF (%d target(s) missed)" % _off)
+	get_tree().quit(0 if _off == 0 else 1)
+
+
+func _play(profile: String, minutes: int) -> void:
+	Game.reset_save()
+	Game.running = false
+	_profile = profile
+	t = 0.0
+	log_rows = []
+	_milestones = {}
+	_pos = WorldMap.CENTER
+	_cell = Vector2i(-1, -1)
+	_walk_left = 0.0
+	_hand_count = 0
+	_hungry_secs = 0.0
 	var end := minutes * 60.0
 	var snapshots := {}
 	while t < end:
 		_think()
 		Game.tick(STEP)
 		t += STEP
+		for p in Game.pets:
+			if Game.mood(p) == "hungry":
+				_hungry_secs += STEP
 		for m in [10, 20, 30, 45, 60, 90, 120]:
 			if not snapshots.has(m) and t >= m * 60.0:
-				snapshots[m] = "pets %d/%d, town %d, buildings %d, glimmer %d, wood %d, stone %d, berries %d, fish %d, crystal %d, goal %d/%d" % [
+				snapshots[m] = "pets %d/%d, town %d, built %d, glimmer %d, wood %d/%d, stone %d/%d, berries %d/%d, fish %d, crystal %d, goal %d/%d, by hand %d" % [
 					Game.pets.size(), Game.capacity(), Game.town_level, Game.buildings.filter(func(b): return bool(b["built"])).size(),
-					Game.res["glimmer"], Game.res["wood"], Game.res["stone"], Game.res["berries"], Game.res["fish"], Game.res["crystal"],
-					Game.goal_index, Data.GOALS.size()]
-	print("\n=== Balance run: %d simulated minutes ===" % minutes)
+					Game.res["glimmer"], Game.res["wood"], Game.storage_cap("wood"), Game.res["stone"], Game.storage_cap("stone"),
+					Game.res["berries"], Game.storage_cap("berries"), Game.res["fish"], Game.res["crystal"],
+					Game.goal_index, Data.GOALS.size(), _hand_count]
+	print("\n=== %s player: %d simulated minutes ===" % [profile.capitalize(), minutes])
 	for r in log_rows:
-		print("  %s  %s" % [_fmt(r[0]), r[1]])
-	print("\n--- Snapshots ---")
+		if not str(r[1]).begins_with("Pet #") or str(r[1]).begins_with("Pet #1 ") or str(r[1]).begins_with("Pet #2 "):
+			print("  %s  %s" % [_fmt(r[0]), r[1]])
+	print("--- Snapshots ---")
 	for m in [10, 20, 30, 45, 60, 90, 120]:
 		if snapshots.has(m):
 			print("  %3d min: %s" % [m, snapshots[m]])
-	print("\n--- Targets ---")
-	_target("First hatch", _milestones.get("hatch1", INF), 0, 60)
-	var first_build := INF
-	for k in _milestones:
-		if str(k).begins_with("built_"):
-			first_build = minf(first_build, _milestones[k])
-	_target("First new building finished", first_build, 0, 300)
-	_target("Town Hall level 2", _milestones.get("goal10", INF), 1800, 2700)
-	Game.reset_save()
-	print("BALANCE OK" if _off == 0 else "BALANCE OFF (%d target(s) missed)" % _off)
-	get_tree().quit(0 if _off == 0 else 1)
+	var pet_secs := 0.0
+	print("  Hungry pet-minutes over the run: %d" % int(_hungry_secs / 60.0))
+	print("--- Targets ---")
+	var th2: float = _milestones.get("goal_town2", INF)
+	if profile == "typical":
+		_target("First hatch", _milestones.get("hatch1", INF), 0, 60)
+		var first_build := INF
+		for k in _milestones:
+			if str(k).begins_with("built_"):
+				first_build = minf(first_build, _milestones[k])
+		_target("First new building finished", first_build, 0, 300)
+		_target("Town Hall level 2", th2, 1800, 2700)
+	else:
+		_target("Town Hall 2 (grinding by hand)", th2, 1200, 2700)
 
 
 func _target(name: String, at: float, lo: float, hi: float) -> void:
 	var ok := at >= lo and at <= hi
 	if not ok:
 		_off += 1
-	print("  %-30s %s   target %s to %s   %s" % [name, "never" if at == INF else _fmt(at), _fmt(lo), _fmt(hi), "OK" if ok else "OFF"])
+	print("  %-32s %s   target %s to %s   %s" % [name, "never" if at == INF else _fmt(at), _fmt(lo), _fmt(hi), "OK" if ok else "OFF"])
 
 
 # ================================================================ the bot
 
+func _duty() -> float:
+	## Share of each minute the player spends gathering by hand.
+	if _profile == "grinder":
+		return 1.0 if t < 1800.0 else 0.15
+	if t < 600.0:
+		return 0.5
+	return 0.15 if t < 1800.0 else 0.05
+
+
 func _think() -> void:
-	_keeper_t += STEP
-	# hands-on early, then the pets take over and the player gathers now and then
-	if _keeper_t >= (KEEPER_EVERY if t < 20.0 * 60.0 else KEEPER_EVERY * 4.0):
-		_keeper_t = 0.0
-		Game.keeper_gather(_wanted_node())
+	if fmod(t, 60.0) < _duty() * 60.0:
+		_hand_gather()
 	_staff()
 	_follow_goal()
 	_housekeeping()
 
 
+func _hand_gather() -> void:
+	if _walk_left > 0.0:
+		_walk_left -= STEP
+		return
+	var kind := _wanted_node()
+	if _cell.x < 0 or Game.node_kind(_cell) != kind or Game.node_left(_cell) <= 0:
+		_cell = _nearest(kind)
+		if _cell.x < 0:
+			return
+		_walk_left = (Vector2(_cell) - _pos).length() * WorldMap.TILE / WALK_SPEED + 0.3
+		_pos = Vector2(_cell)
+		return
+	var cadence := 1.5 if kind == "crystal" else (1.0 if kind == "water" else 0.5)
+	_hand_t += STEP
+	if _hand_t < cadence:
+		return
+	_hand_t = 0.0
+	var r := Game.keeper_gather_at(_cell)
+	if r != "" and r != "empty" and r != "full":
+		_hand_count += 1
+
+
+func _nearest(kind: String) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for cell in Game.map.nodes:
+		if Game.map.nodes[cell] != kind or Game.node_left(cell) <= 0:
+			continue
+		var d := (Vector2(cell) - _pos).length()
+		if d < best_d and (Vector2(cell) - WorldMap.CENTER).length() < 22.0:
+			best_d = d
+			best = cell
+	return best
+
+
 func _wanted_node() -> String:
+	if not Game.pets.is_empty() and int(Game.res["berries"]) < 15 and not Game.is_full("berries"):
+		return "bush"
 	var g := Game.current_goal()
 	var cost := _goal_cost(g)
+	var pick := "tree"
 	if int(cost.get("stone", 0)) > int(Game.res["stone"]) and int(Game.res["wood"]) >= int(cost.get("wood", 0)):
-		return "rock"
-	if int(cost.get("berries", 0)) > int(Game.res["berries"]):
-		return "bush"
-	return "tree" if Game.res["wood"] <= Game.res["stone"] + 20 else "rock"
+		pick = "rock"
+	elif int(cost.get("berries", 0)) > int(Game.res["berries"]):
+		pick = "bush"
+	elif Game.res["wood"] > Game.res["stone"] + 20:
+		pick = "rock"
+	if Game.is_full(Data.NODES[pick]["res"]):
+		pick = "rock" if pick == "tree" else "tree"
+	return pick
 
 
 func _goal_cost(g: Dictionary) -> Dictionary:
 	if g.is_empty():
 		return {}
-	var map := {"lumber": "lumber_camp", "house": "house", "quarry": "quarry", "workshop": "workshop",
+	var map := {"lumber": "lumber_camp", "house": "house", "farm": "berry_farm", "storehouse": "storehouse", "quarry": "quarry", "workshop": "workshop",
 		"dock": "fishing_dock", "explore": "explorer_lodge", "crystal": "crystal_mine"}
 	if map.has(g["id"]):
 		return Game.build_cost(map[g["id"]])
@@ -161,6 +246,8 @@ func _sell_for(cost: Dictionary) -> void:
 func _staff() -> void:
 	# keep one builder, then fill workplaces in this order
 	var order := ["building", "woodcutting", "mining", "foraging", "fishing", "exploring"]
+	if int(Game.res["berries"]) < 40 and not Game.pets.is_empty():
+		order = ["building", "foraging", "woodcutting", "mining", "fishing", "exploring"]
 	for p in Game.pets:
 		if int(p["work"]) != -1:
 			continue
@@ -208,6 +295,10 @@ func _follow_goal() -> void:
 			if not _has_any("lumber_camp"): _place("lumber_camp")
 		"house":
 			if not _has_any("house"): _place("house")
+		"farm":
+			if not _has_any("berry_farm"): _place("berry_farm")
+		"storehouse":
+			if not _has_any("storehouse"): _place("storehouse")
 		"quarry":
 			if not _has_any("quarry"): _place("quarry")
 		"workshop":
@@ -253,7 +344,7 @@ func _housekeeping() -> void:
 	if not waiting.is_empty() and Game.construction_target().is_empty() and Game.goal_index > 3:
 		_place("house")
 	# a new egg whenever there's room and nothing is warming (after the egg tutorial goal)
-	if Game.goal_index > 9 and Game.eggs.is_empty() and Game.pets.size() < Game.capacity():
+	if Game.goal_index > 10 and Game.eggs.is_empty() and Game.pets.size() < Game.capacity():
 		if int(Game.res["glimmer"]) >= 90 + 40:
 			Game.buy_egg("meadow")
 	# keep the carried egg slot full
@@ -265,11 +356,18 @@ func _housekeeping() -> void:
 	if Game.has_built("workshop") and not _has_any("market") and Game.construction_target().is_empty():
 		_place("market")
 	# more room once the town is full and there's glimmer for another egg
-	if Game.pets.size() >= Game.capacity() and Game.goal_index > 10 and Game.construction_target().is_empty() \
+	if Game.pets.size() >= Game.capacity() and Game.goal_index > 11 and Game.construction_target().is_empty() \
 			and int(Game.res["glimmer"]) >= 150:
 		_place("house")
+	# a Storehouse when the next Town Hall upgrade won't fit in storage
+	if Game.town_level < Data.TOWN_LEVELS.size() and Game.construction_target().is_empty() and Game.goal_index > 11:
+		var nxt: Dictionary = Data.TOWN_LEVELS[Game.town_level]["cost"]
+		for r in nxt:
+			if r != "glimmer" and int(nxt[r]) > Game.storage_cap(r):
+				_place("storehouse")
+				break
 	# second workplaces once the first is full
-	if Game.goal_index > 6 and Game.construction_target().is_empty():
-		for pair in [["berry_farm", 8], ["lumber_camp", 9]]:
+	if Game.goal_index > 7 and Game.construction_target().is_empty():
+		for pair in [["berry_farm", 9], ["lumber_camp", 10]]:
 			if Game.buildings_of(pair[0], false).size() < 2 and Game.goal_index >= pair[1] and Game.pets.size() >= 4:
 				_place(pair[0])
