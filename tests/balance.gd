@@ -62,6 +62,12 @@ func _run() -> void:
 func _play(profile: String, minutes: int) -> void:
 	Game.reset_save()
 	Game.running = false
+	# fixed luck (eggs, explorer finds) so every machine sees the same run; --seed=N to try others
+	var seed := 20261107
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--seed="):
+			seed = int(arg.substr(7))
+	Game.rng.seed = seed
 	_profile = profile
 	t = 0.0
 	log_rows = []
