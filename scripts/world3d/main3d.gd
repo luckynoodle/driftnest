@@ -19,6 +19,8 @@ var k3d: Actors3D.Keeper3D
 var b3d: Dictionary = {} # same dict as building_nodes
 var p3d: Dictionary = {} # pid -> Pet3D
 var overlay3d: Overlay3D
+var daynight: DayNight
+var shadow_sun_k := SHADOW_SUN_K
 
 var yaw := 0.0
 var cam_target := Vector3(40.5, 0, 43.5)
@@ -73,6 +75,10 @@ func _build_world() -> void:
 	terrain3d = Terrain3D.new()
 	terrain3d.map = Game.map
 	world.add_child(terrain3d)
+
+	daynight = DayNight.new()
+	daynight.main = self
+	world.add_child(daynight)
 
 
 func _build_view_extras() -> void:

@@ -1410,6 +1410,8 @@ func open_settings() -> void:
 	var body := _scroll(vb)
 	body.add_child(_section("Graphics"))
 	_toggle_row(body, "3D town", "The new 3D look. Turn off to go back to the classic 2D town (same save).", "view3d")
+	if bool(Game.settings.get("view3d", true)):
+		_toggle_row(body, "Day and night", "Evenings, moonlit nights and fireflies. Off keeps it a sunny afternoon.", "daynight")
 	_toggle_row(body, "Visual effects", "Edge blur, sunlight and vignette. Turn off if the game feels slow.", "effects")
 	_toggle_row(body, "Butterflies and pollen", "", "ambient")
 	_toggle_row(body, "Show frame rate", "A counter under the menu buttons, for testing.", "show_fps")

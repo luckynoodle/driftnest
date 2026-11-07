@@ -52,7 +52,7 @@ var _last_wall := 0.0
 
 ## Per-device preferences (not part of the town save).
 const SETTINGS_PATH := "user://settings.cfg"
-var settings := {"effects": true, "ambient": true, "show_fps": false, "ui_size": "auto", "view3d": true}
+var settings := {"effects": true, "ambient": true, "show_fps": false, "ui_size": "auto", "view3d": true, "daynight": true}
 var build_info := {}
 
 

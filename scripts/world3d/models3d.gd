@@ -49,12 +49,29 @@ static func _pet_cols(species: String, prism: bool) -> Array:
 	return [body, acc]
 
 
-## A pet, about 1 unit tall at full size, feet on y = 0, face towards +Z.
+## A pet, about 1 unit tall at full size, feet on y = 0, face towards +Z (one merged mesh).
 static func pet(species: String, prism := false) -> ArrayMesh:
-	return _cached("pet_%s_%s" % [species, prism], func(): return _build_pet(species, prism))
+	return _cached("pet_%s_%s" % [species, prism], func(): return _build_pet(species, prism, false)["body"])
 
 
-static func _build_pet(species: String, prism: bool) -> ArrayMesh:
+## The pet split into parts that animate: {body, lids, ears, tail, wing_l, wing_r} meshes plus
+## {ear_pivot, tail_pivot, wing_pivot_l, wing_pivot_r}; each part's mesh is relative to its pivot.
+static func pet_parts(species: String, prism := false) -> Dictionary:
+	var key := "petparts_%s_%s" % [species, prism]
+	if not _cache.has(key):
+		_cache[key] = _build_pet(species, prism, true)
+	return _cache[key]
+
+
+static func _part(split: bool, main: MeshKit, pivot: Vector3) -> MeshKit:
+	if not split:
+		return main
+	var k := MeshKit.new()
+	k.push(Transform3D(Basis(), -pivot))
+	return k
+
+
+static func _build_pet(species: String, prism: bool, split: bool) -> Dictionary:
 	var sp: Dictionary = Data.SPECIES[species]
 	var cols := _pet_cols(species, prism)
 	var body: Color = cols[0]
@@ -82,7 +99,16 @@ static func _build_pet(species: String, prism: bool) -> ArrayMesh:
 		k.ball(Vector3(sx * 0.13 - 0.018, cy + 0.095, fz * 0.9 + 0.028), 0.02, Color.WHITE, 8)
 		k.sphere(Vector3(sx * 0.21, cy - 0.025, fz * 0.8), Vector3(0.05, 0.028, 0.02), BLUSH, 10)
 	k.ball(Vector3(0, cy + 0.0, fz * 0.98), 0.03, EYE, 8)
+	# eyelids (shown while blinking or asleep)
+	var kl := MeshKit.new()
+	for sx in [-1.0, 1.0]:
+		kl.sphere(Vector3(sx * 0.13, cy + 0.075, fz * 0.9 + 0.006), Vector3(0.064, 0.072, 0.04), body, 12)
+		kl.box(Vector3(sx * 0.13, cy + 0.045, fz * 0.9 + 0.045), Vector3(0.08, 0.012, 0.01), EYE)
 	var top := cy + r * 0.95
+	var ear_pivot := Vector3(0, top - 0.06, 0)
+	var main := k
+	k = _part(split, main, ear_pivot)
+	var ke := k
 	# ears
 	match str(sp["ears"]):
 		"round":
@@ -114,6 +140,9 @@ static func _build_pet(species: String, prism: bool) -> ArrayMesh:
 		"crest":
 			for i in 3:
 				_spike(k, Vector3(0, top - 0.04, 0.05 - i * 0.08), Vector3(0, 1, -0.5 - i * 0.3), 0.05, 0.24 - i * 0.03, acc, 8)
+	var tail_pivot := Vector3(0, 0.27, -0.3)
+	k = _part(split, main, tail_pivot)
+	var kt := k
 	# tail (behind = -Z)
 	match str(sp["tail"]):
 		"puff":
@@ -135,6 +164,11 @@ static func _build_pet(species: String, prism: bool) -> ArrayMesh:
 				k.sphere(Vector3.ZERO, Vector3(0.09, 0.26, 0.06), body, 10)
 				k.sphere(Vector3(0, 0.2, 0), Vector3(0.07, 0.09, 0.05), acc, 8)
 				k.pop()
+	k = main
+	var wl: MeshKit = null
+	var wr: MeshKit = null
+	var wpl := Vector3(-0.22, cy + 0.1, -0.1)
+	var wpr := Vector3(0.22, cy + 0.1, -0.1)
 	# extras
 	match str(sp["extra"]):
 		"spikes":
@@ -149,7 +183,12 @@ static func _build_pet(species: String, prism: bool) -> ArrayMesh:
 		"wings":
 			var wc := acc if species != "luna_moth" else acc.lerp(Color("#bfeeb0"), 0.4)
 			for sx in [-1.0, 1.0]:
-				k.sphere(Vector3(sx * 0.36, cy + 0.12, -0.12), Vector3(0.26, 0.04, 0.17), wc, 12, Vector3(0, sx * 20, sx * 35))
+				var kw := _part(split, main, wpl if sx < 0 else wpr)
+				kw.sphere(Vector3(sx * 0.36, cy + 0.12, -0.12), Vector3(0.26, 0.04, 0.17), wc, 12, Vector3(0, sx * 20, sx * 35))
+				if sx < 0:
+					wl = kw
+				else:
+					wr = kw
 		"stripes":
 			for sx in [-1.0, 1.0]:
 				for i in 3:
@@ -182,7 +221,14 @@ static func _build_pet(species: String, prism: bool) -> ArrayMesh:
 				_spike(k, Vector3(sx * 0.1, top - 0.02, 0.06), Vector3(sx * 0.2, 1, -0.3), 0.04, 0.2, acc, 8)
 		"glow":
 			k.sphere(Vector3(0, cy + 0.22, r * 0.78), Vector3(0.06, 0.06, 0.02), Color("#ffe58a"), 10)
-	return k.commit()
+	var out := {"body": main.commit(), "lids": kl.commit(), "ear_pivot": ear_pivot, "tail_pivot": tail_pivot,
+		"wing_pivot_l": wpl, "wing_pivot_r": wpr}
+	if split:
+		out["ears"] = null if ke.is_empty() else ke.commit()
+		out["tail"] = null if kt.is_empty() else kt.commit()
+		out["wing_l"] = null if wl == null else wl.commit()
+		out["wing_r"] = null if wr == null else wr.commit()
+	return out
 
 
 # ================================================================ tools, eggs
@@ -237,38 +283,109 @@ static func egg(egg_type: String) -> ArrayMesh:
 
 # ================================================================ the Keeper
 
-## [body, left leg, right leg]; the body includes arms, scarf, head and hat.
-static func keeper_parts() -> Array:
-	if _cache.has("keeper"):
-		return _cache["keeper"]
-	var cloak := Color("#3f7f7a")
-	var skin := Color("#f5d7b8")
+## The Keeper's look. Every key is optional; missing ones use the default Keeper.
+const KEEPER_DEFAULT := {"skin": "#f5d7b8", "hair": "short", "hair_col": "#6b4a32", "outfit": "#3f7f7a",
+	"scarf": "#f2a53a", "hat": "leaf_cap", "hat_col": "#7b5cb4", "pants": "#2f4a52"}
+
+const KEEPER_PRESETS := [
+	{"name": "Meadow", "skin": "#f5d7b8", "hair": "short", "hair_col": "#6b4a32", "outfit": "#3f7f7a", "scarf": "#f2a53a", "hat": "leaf_cap", "hat_col": "#7b5cb4"},
+	{"name": "Harbour", "skin": "#c68a5e", "hair": "curly", "hair_col": "#2b2220", "outfit": "#34508a", "scarf": "#f2d04a", "hat": "bucket", "hat_col": "#f2c84b"},
+	{"name": "Ember", "skin": "#eac0a0", "hair": "bob", "hair_col": "#c45a2c", "outfit": "#e8735a", "scarf": "#fff1dc", "hat": "beret", "hat_col": "#8a3b5c"},
+	{"name": "Aurora", "skin": "#8d5a3b", "hair": "long", "hair_col": "#3a2a24", "outfit": "#9a7fd0", "scarf": "#9fe3c8", "hat": "flowers", "hat_col": "#ffb3c7"},
+	{"name": "Woodland", "skin": "#f0c9a8", "hair": "bun", "hair_col": "#e2b45a", "outfit": "#4f7a3a", "scarf": "#d0503f", "hat": "beanie", "hat_col": "#d0503f"},
+	{"name": "Sunny", "skin": "#5e3a26", "hair": "pigtails", "hair_col": "#241a16", "outfit": "#e0a83a", "scarf": "#3f9a8a", "hat": "straw", "hat_col": "#ef6f5e"},
+]
+
+const HAIR_STYLES := ["short", "bob", "long", "bun", "curly", "pigtails"]
+const HAT_STYLES := ["leaf_cap", "beret", "bucket", "beanie", "straw", "flowers", "none"]
+
+
+## [body, left leg, right leg]; the body includes arms, scarf, head, hair and hat.
+static func keeper_parts(look: Dictionary = {}) -> Array:
+	var lk := KEEPER_DEFAULT.duplicate()
+	lk.merge(look, true)
+	var key := "keeper_" + str(lk)
+	if _cache.has(key):
+		return _cache[key]
+	var cloak := Color(str(lk["outfit"]))
+	var skin := Color(str(lk["skin"]))
+	var hair := Color(str(lk["hair_col"]))
+	var scarf := Color(str(lk["scarf"]))
+	var hc := Color(str(lk["hat_col"]))
 	var b := MeshKit.new()
 	b.capsule(Vector3(0, 0.66, 0), 0.25, 0.78, cloak, Vector3.ZERO)
 	b.sphere(Vector3(0, 0.36, 0), Vector3(0.27, 0.08, 0.22), cloak.darkened(0.12), 14)
 	for sx in [-1.0, 1.0]:
 		b.capsule(Vector3(sx * 0.29, 0.66, 0.02), 0.07, 0.42, cloak.darkened(0.08), Vector3(0, 0, sx * 12))
 		b.ball(Vector3(sx * 0.32, 0.45, 0.05), 0.07, skin, 10)
-	b.torus(Vector3(0, 1.0, 0), 0.13, 0.23, Color("#f2a53a"), Vector3.ZERO, Vector3(1, 1.3, 1))
-	b.box(Vector3(0.1, 0.83, 0.2), Vector3(0.1, 0.3, 0.04), Color("#f2a53a"), Vector3(0, 0, -8))
+	b.torus(Vector3(0, 1.0, 0), 0.13, 0.23, scarf, Vector3.ZERO, Vector3(1, 1.3, 1))
+	b.box(Vector3(0.1, 0.83, 0.2), Vector3(0.1, 0.3, 0.04), scarf, Vector3(0, 0, -8))
 	b.ball(Vector3(0, 1.27, 0), 0.24, skin, 20)
 	for sx in [-1.0, 1.0]:
 		b.sphere(Vector3(sx * 0.085, 1.29, 0.215), Vector3(0.033, 0.04, 0.02), EYE, 10)
 		b.ball(Vector3(sx * 0.085 - 0.012, 1.305, 0.232), 0.012, Color.WHITE, 6)
 		b.sphere(Vector3(sx * 0.14, 1.22, 0.19), Vector3(0.035, 0.02, 0.012), BLUSH, 8)
-	b.sphere(Vector3(0, 1.21, 0.235), Vector3(0.035, 0.02, 0.012), Color("#c9805f"), 8)
-	b.cyl(Vector3(0, 1.43, 0), 0.36, 0.36, 0.045, Color("#6b4fa0"), 24, Vector3(-6, 0, 0))
-	b.sphere(Vector3(0, 1.47, 0), Vector3(0.23, 0.18, 0.23), Color("#7b5cb4"), 18)
-	b.cyl(Vector3(0.02, 1.68, 0), 0.015, 0.02, 0.18, Color("#4f8a3a"), 6)
-	b.sphere(Vector3(0.1, 1.78, 0), Vector3(0.14, 0.05, 0.08), Color("#7cc85b"), 10, Vector3(0, 0, -30))
+	b.sphere(Vector3(0, 1.21, 0.235), Vector3(0.035, 0.02, 0.012), skin.darkened(0.2), 8)
+	# hair
+	var hs := str(lk["hair"])
+	if hs != "curly":
+		b.sphere(Vector3(0, 1.33, -0.025), Vector3(0.258, 0.2, 0.255), hair, 18)
+		for i in 5:
+			b.sphere(Vector3(-0.15 + i * 0.075, 1.4 - absf(i - 2) * 0.012, 0.17), Vector3(0.06, 0.05, 0.045), hair, 8)
+	match hs:
+		"bob", "long":
+			for sx in [-1.0, 1.0]:
+				b.sphere(Vector3(sx * 0.21, 1.2, -0.01), Vector3(0.09, 0.16, 0.13), hair, 12)
+			b.sphere(Vector3(0, 1.2, -0.12), Vector3(0.23, 0.17, 0.14), hair, 14)
+			if hs == "long":
+				b.sphere(Vector3(0, 0.98, -0.16), Vector3(0.22, 0.3, 0.1), hair, 14)
+		"bun":
+			b.ball(Vector3(0, 1.38, -0.24), 0.11, hair, 12)
+		"curly":
+			for d in [Vector3(0, 1, -0.2), Vector3(0.6, 0.7, -0.3), Vector3(-0.6, 0.7, -0.3), Vector3(0.85, 0.2, -0.2), Vector3(-0.85, 0.2, -0.2), Vector3(0.4, 0.5, -0.8), Vector3(-0.4, 0.5, -0.8), Vector3(0, 0.3, -1), Vector3(0.3, 0.95, 0.3), Vector3(-0.3, 0.95, 0.3), Vector3(0, 0.85, 0.55), Vector3(0.65, 0.65, 0.35), Vector3(-0.65, 0.65, 0.35)]:
+				var n: Vector3 = d.normalized()
+				b.ball(Vector3(0, 1.28, 0) + n * 0.235, 0.085, hair, 8)
+		"pigtails":
+			for sx in [-1.0, 1.0]:
+				b.ball(Vector3(sx * 0.27, 1.17, -0.06), 0.085, hair, 10)
+				b.ball(Vector3(sx * 0.25, 1.23, -0.05), 0.035, scarf, 6)
+	# hat
+	match str(lk["hat"]):
+		"leaf_cap":
+			b.cyl(Vector3(0, 1.43, 0), 0.36, 0.36, 0.045, hc.darkened(0.12), 24, Vector3(-6, 0, 0))
+			b.sphere(Vector3(0, 1.47, 0), Vector3(0.23, 0.18, 0.23), hc, 18)
+			b.cyl(Vector3(0.02, 1.68, 0), 0.015, 0.02, 0.18, Color("#4f8a3a"), 6)
+			b.sphere(Vector3(0.1, 1.78, 0), Vector3(0.14, 0.05, 0.08), Color("#7cc85b"), 10, Vector3(0, 0, -30))
+		"beret":
+			b.sphere(Vector3(0.04, 1.49, -0.02), Vector3(0.28, 0.08, 0.27), hc, 18, Vector3(0, 0, -10))
+			b.cyl(Vector3(0.05, 1.58, -0.02), 0.012, 0.02, 0.06, hc.darkened(0.2), 6)
+		"bucket":
+			b.cyl(Vector3(0, 1.43, 0), 0.27, 0.38, 0.1, hc.darkened(0.08), 24)
+			b.cyl(Vector3(0, 1.52, 0), 0.2, 0.25, 0.16, hc, 20)
+		"beanie":
+			b.sphere(Vector3(0, 1.42, -0.01), Vector3(0.265, 0.24, 0.265), hc, 18)
+			b.cyl(Vector3(0, 1.39, 0), 0.27, 0.27, 0.08, hc.darkened(0.15), 20)
+			b.ball(Vector3(0, 1.68, -0.02), 0.07, Color("#fff6ea"), 10)
+		"straw":
+			b.cyl(Vector3(0, 1.44, 0), 0.46, 0.46, 0.035, Color("#e8c77a"), 28, Vector3(-5, 0, 0))
+			b.cyl(Vector3(0, 1.53, 0), 0.19, 0.22, 0.16, Color("#e8c77a"), 20)
+			b.cyl(Vector3(0, 1.49, 0), 0.225, 0.225, 0.05, hc, 20)
+		"flowers":
+			var fc := [hc, Color("#fff6ea"), Color("#ffd166"), hc.lightened(0.2), Color("#b48cff")]
+			for i in 9:
+				var a := TAU * i / 9.0
+				b.ball(Vector3(cos(a) * 0.22, 1.47, sin(a) * 0.22), 0.055, fc[i % fc.size()], 8)
+			for i in 9:
+				var a := TAU * (i + 0.5) / 9.0
+				b.sphere(Vector3(cos(a) * 0.23, 1.46, sin(a) * 0.23), Vector3(0.04, 0.015, 0.06), Color("#6cbd5a"), 6, Vector3(0, -rad_to_deg(a), 0))
 	var legs := []
 	for sx in [-1.0, 1.0]:
 		var l := MeshKit.new()
-		l.box(Vector3(0, -0.15, 0), Vector3(0.13, 0.3, 0.14), Color("#2f4a52"))
+		l.box(Vector3(0, -0.15, 0), Vector3(0.13, 0.3, 0.14), Color(str(lk["pants"])))
 		l.sphere(Vector3(0, -0.3, 0.04), Vector3(0.08, 0.05, 0.11), Color("#5a3b2c"), 10)
 		legs.append(l.commit())
 	var out := [b.commit(), legs[0], legs[1]]
-	_cache["keeper"] = out
+	_cache[key] = out
 	return out
 
 
@@ -368,7 +485,9 @@ static func _cottage(k: MeshKit, w: float, d: float, wall_h: float, roof_col: Co
 	k.ball(Vector3(-w * 0.17 + 0.14, 0.6, fz + 0.06), 0.035, Color("#f2c14e"), 6)
 	# window with flower box
 	var wx := w * 0.24
+	k.glowing = true
 	k.box(Vector3(wx, 0.95, fz + 0.01), Vector3(0.44, 0.4, 0.05), WINDOW)
+	k.glowing = false
 	k.box(Vector3(wx, 0.95, fz + 0.04), Vector3(0.05, 0.4, 0.05), BEAM)
 	k.box(Vector3(wx, 0.71, fz + 0.06), Vector3(0.54, 0.06, 0.1), BEAM)
 	k.box(Vector3(wx, 0.63, fz + 0.1), Vector3(0.54, 0.12, 0.16), Color("#a0673f"))
@@ -396,7 +515,9 @@ static func _build_building(type: String, variant: int) -> ArrayMesh:
 			_cottage(k, 2.8, 2.2, 1.7, Color("#3d6cc4"), Color("#7a5ca8"), 1.2)
 			# clock tower
 			k.box(Vector3(0, 2.6, 0.1), Vector3(0.9, 1.6, 0.9), WALL)
+			k.glowing = true
 			k.cyl(Vector3(0, 3.0, 0.56), 0.28, 0.28, 0.04, Color("#fffaf0"), 20, Vector3(90, 0, 0))
+			k.glowing = false
 			k.box(Vector3(0, 3.06, 0.59), Vector3(0.03, 0.18, 0.02), EYE)
 			k.box(Vector3(0.05, 3.0, 0.59), Vector3(0.12, 0.03, 0.02), EYE)
 			k.cone(Vector3(0, 3.75, 0.1), 0.68, 0.75, Color("#2f57a8"), 4, Vector3(0, 45, 0))
@@ -448,7 +569,9 @@ static func _build_building(type: String, variant: int) -> ArrayMesh:
 			k.box(Vector3(0, 0.62, 0.81), Vector3(0.7, 0.85, 0.04), Color("#a8432f"))
 			k.box(Vector3(0, 0.62, 0.84), Vector3(0.9, 0.06, 0.03), Color("#fff3e0"), Vector3(0, 0, 50))
 			k.box(Vector3(0, 0.62, 0.84), Vector3(0.9, 0.06, 0.03), Color("#fff3e0"), Vector3(0, 0, -50))
+			k.glowing = true
 			k.box(Vector3(0, 1.55, 0.79), Vector3(0.3, 0.3, 0.05), WINDOW)
+			k.glowing = false
 			k.box(Vector3(-0.7, 0.2, 0.95), Vector3(0.35, 0.35, 0.35), WOOD_LIGHT, Vector3(0, 15, 0))
 		"lumber_camp":
 			k.box(Vector3(0, 0.05, 0), Vector3(1.8, 0.1, 1.6), Color("#c6a77a"))
@@ -549,7 +672,9 @@ static func _build_building(type: String, variant: int) -> ArrayMesh:
 		"lamp":
 			k.cyl(Vector3(0, 0.08, 0), 0.14, 0.16, 0.16, Color("#4a4a5a"), 8)
 			k.cyl(Vector3(0, 0.9, 0), 0.04, 0.06, 1.6, Color("#4a4a5a"), 8)
+			k.glowing = true
 			k.box(Vector3(0, 1.78, 0), Vector3(0.24, 0.28, 0.24), Color("#ffe39a"))
+			k.glowing = false
 			k.cone(Vector3(0, 1.98, 0), 0.22, 0.14, Color("#4a4a5a"), 4, Vector3(0, 45, 0))
 		"fountain":
 			k.cyl(Vector3(0, 0.22, 0), 0.9, 0.98, 0.44, STONE, 28)

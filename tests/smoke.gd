@@ -362,6 +362,10 @@ func _run() -> void:
 		var d: Vector2 = main._screen_dir_to_world(Vector2(1, 0))
 		_check(d.distance_to(Vector2(0, -1)) < 0.01 or d.distance_to(Vector2(0, 1)) < 0.01, "3D: joystick turns with the camera")
 		main.rotate_view(-PI / 2.0)
+		main.daynight.set_phase(0.8)
+		_check(main.daynight.night > 0.9 and main.sun.light_energy < 0.3, "3D: night falls")
+		main.daynight.set_phase(0.3)
+		_check(main.daynight.night < 0.01, "3D: and the sun comes back up")
 		var g: Vector2 = main.screen_to_world(main.cam3d.unproject_position(Terrain3D.to3(main.keeper.position)))
 		_check(g.distance_to(main.keeper.position) < 20.0, "3D: screen taps land on the right ground spot")
 

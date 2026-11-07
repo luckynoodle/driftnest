@@ -5,16 +5,21 @@ extends RefCounted
 
 static var _cache := {}
 static var _mat: StandardMaterial3D
-static var _mat_glow: StandardMaterial3D
+static var _mat_glow: ShaderMaterial
+static var _mat_pool: ShaderMaterial
 
 var st := SurfaceTool.new()
+var gst := SurfaceTool.new() # shapes that light up at night (windows, lamps)
 var xf := Transform3D.IDENTITY # applied to every shape added (use push/pop to nest)
+var glowing := false # while true, new shapes go to the night-glow surface
 var _stack: Array = []
 var _any := false
+var _any_glow := false
 
 
 func _init() -> void:
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	gst.begin(Mesh.PRIMITIVE_TRIANGLES)
 
 
 ## The shared matte material every kit mesh uses (colours come from the vertices).
@@ -28,13 +33,47 @@ static func material() -> StandardMaterial3D:
 	return _mat
 
 
-static func glow_material() -> StandardMaterial3D:
+## Windows and lamps: lit like everything else by day, glowing warmly at night.
+static func glow_material() -> ShaderMaterial:
 	if _mat_glow == null:
-		_mat_glow = StandardMaterial3D.new()
-		_mat_glow.vertex_color_use_as_albedo = true
-		_mat_glow.vertex_color_is_srgb = true
-		_mat_glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		var sh := Shader.new()
+		sh.code = """
+shader_type spatial;
+uniform float night = 0.0;
+void fragment() {
+	vec3 c = pow(COLOR.rgb, vec3(2.2));
+	ALBEDO = c;
+	ROUGHNESS = 0.5;
+	EMISSION = c * night * 1.8;
+}
+"""
+		_mat_glow = ShaderMaterial.new()
+		_mat_glow.shader = sh
 	return _mat_glow
+
+
+## A soft warm pool of light on the ground (under lamps), only at night.
+static func pool_material() -> ShaderMaterial:
+	if _mat_pool == null:
+		var sh := Shader.new()
+		sh.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
+uniform float night = 0.0;
+void fragment() {
+	float a = smoothstep(1.0, 0.0, length(UV * 2.0 - 1.0));
+	ALBEDO = vec3(1.0, 0.72, 0.38) * a * a * night * 0.55;
+}
+"""
+		_mat_pool = ShaderMaterial.new()
+		_mat_pool.shader = sh
+	return _mat_pool
+
+
+## 0 = full day, 1 = full night.
+static func set_night(v: float) -> void:
+	glow_material().set_shader_parameter("night", v)
+	pool_material().set_shader_parameter("night", v)
 
 
 func push(t: Transform3D) -> void:
@@ -71,8 +110,12 @@ static func _colored(key: String, make: Callable, col: Color) -> ArrayMesh:
 
 
 func _add(m: ArrayMesh, t: Transform3D) -> void:
-	st.append_from(m, 0, xf * t)
-	_any = true
+	if glowing:
+		gst.append_from(m, 0, xf * t)
+		_any_glow = true
+	else:
+		st.append_from(m, 0, xf * t)
+		_any = true
 
 
 # ---------------------------------------------------------------- shapes
@@ -199,15 +242,17 @@ func ellipse(c: Vector3, rx: float, rz: float, h: float, col: Color, seg := 28, 
 # ---------------------------------------------------------------- output
 
 func is_empty() -> bool:
-	return not _any
+	return not _any and not _any_glow
 
 
 func commit() -> ArrayMesh:
-	if not _any:
-		return ArrayMesh.new()
-	var m := st.commit()
-	if m.get_surface_count() > 0:
-		m.surface_set_material(0, material())
+	var m := ArrayMesh.new()
+	if _any:
+		st.commit(m)
+		m.surface_set_material(m.get_surface_count() - 1, material())
+	if _any_glow:
+		gst.commit(m)
+		m.surface_set_material(m.get_surface_count() - 1, glow_material())
 	return m
 
 
