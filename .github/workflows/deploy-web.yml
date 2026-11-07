@@ -51,8 +51,11 @@ jobs:
       - name: Import project
         run: timeout 300 ~/godot/godot --headless --editor --quit || true
 
-      - name: Smoke test (headless play-through)
+      - name: Smoke test (headless play-through, classic 2D)
         run: timeout 300 ~/godot/godot --headless --path . -- --smoke
+
+      - name: Smoke test (headless play-through, 3D town)
+        run: timeout 300 ~/godot/godot --headless --path . -- --smoke --3d
 
       - name: Balance check (simulated first two hours must hit the pacing targets)
         run: timeout 300 ~/godot/godot --headless --path . -- --balance

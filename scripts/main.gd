@@ -42,9 +42,46 @@ const PAN_THRESHOLD := 24.0
 
 # test hook: scripted input used by the automated smoke test
 var auto_dir := Vector2.ZERO
+## The Keeper's movement this frame (world directions), for views that turn the Keeper to face it.
+var move_dir := Vector2.ZERO
 
 
 func _ready() -> void:
+	_build_world()
+	keeper = Keeper.new()
+	keeper.scale = Vector2(0.8, 0.8)
+	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
+	ysort.add_child(keeper)
+	_build_view_extras()
+
+	hud = GameHud.new()
+	hud.main = self
+	add_child(hud)
+
+	Game.changed.connect(_sync)
+	Game.settings_changed.connect(_apply_settings)
+	_apply_settings()
+	Game.building_done.connect(func(_b): _sync())
+	Game.produced.connect(_on_produced)
+	_sync()
+
+	if "--balance" in OS.get_cmdline_user_args():
+		var bal = load("res://tests/balance.gd").new()
+		bal.main = self
+		add_child(bal)
+	if "--showcase" in OS.get_cmdline_user_args():
+		var show = load("res://tests/showcase.gd").new()
+		show.main = self
+		add_child(show)
+	if "--smoke" in OS.get_cmdline_user_args():
+		var smoke = load("res://tests/smoke.gd").new()
+		smoke.main = self
+		add_child(smoke)
+
+
+## The ground, nature and the y-sorted layer that holds buildings, pets and the Keeper.
+## (The 3D view replaces this.)
+func _build_world() -> void:
 	RenderingServer.set_default_clear_color(Color("#6aa84f"))
 
 	var terrain: Node2D = TerrainScript.new()
@@ -65,11 +102,9 @@ func _ready() -> void:
 		props[cell] = pr
 	Game.node_changed.connect(_on_node_changed)
 
-	keeper = Keeper.new()
-	keeper.scale = Vector2(0.8, 0.8)
-	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
-	ysort.add_child(keeper)
 
+## Overlay, camera, ambient life and the post-processing layer. (The 3D view replaces this.)
+func _build_view_extras() -> void:
 	overlay = WorldOverlay.new()
 	overlay.main = self
 	overlay.z_index = 50
@@ -103,30 +138,6 @@ func _ready() -> void:
 	post_layer.add_child(post)
 	add_child(post_layer)
 
-	hud = GameHud.new()
-	hud.main = self
-	add_child(hud)
-
-	Game.changed.connect(_sync)
-	Game.settings_changed.connect(_apply_settings)
-	_apply_settings()
-	Game.building_done.connect(func(_b): _sync())
-	Game.produced.connect(_on_produced)
-	_sync()
-
-	if "--balance" in OS.get_cmdline_user_args():
-		var bal = load("res://tests/balance.gd").new()
-		bal.main = self
-		add_child(bal)
-	if "--showcase" in OS.get_cmdline_user_args():
-		var show = load("res://tests/showcase.gd").new()
-		show.main = self
-		add_child(show)
-	if "--smoke" in OS.get_cmdline_user_args():
-		var smoke = load("res://tests/smoke.gd").new()
-		smoke.main = self
-		add_child(smoke)
-
 
 # ================================================================ syncing nodes with state
 
@@ -136,14 +147,8 @@ func _sync() -> void:
 	for b in Game.buildings:
 		var bid := int(b["id"])
 		seen[bid] = true
-		var node: BuildingView = building_nodes.get(bid)
-		if node == null:
-			node = BuildingView.new()
-			node.setup(b["type"], bid)
-			ysort.add_child(node)
-			building_nodes[bid] = node
+		_view_building(b)
 		var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
-		node.position = WorldMap.cell_to_world(b["cell"]) + Vector2(size.x * T / 2.0, size.y * T)
 		if not bool(Data.BUILDINGS[b["type"]].get("deco", false)) or size.x > 1 or b["type"] == "lamp":
 			for y in size.y:
 				for x in size.x:
@@ -152,6 +157,7 @@ func _sync() -> void:
 		if not seen.has(bid):
 			building_nodes[bid].queue_free()
 			building_nodes.erase(bid)
+			_view_building_removed(bid)
 
 	var pseen := {}
 	for p in Game.pets:
@@ -165,10 +171,42 @@ func _sync() -> void:
 				a.position = WorldMap.cell_to_world(Game.find_building(_nest_id())["cell"]) + Vector2(64, 150)
 			ysort.add_child(a)
 			pet_nodes[pid] = a
+			_view_pet_added(pid, a)
 	for pid in pet_nodes.keys():
 		if not pseen.has(pid):
 			pet_nodes[pid].queue_free()
 			pet_nodes.erase(pid)
+			_view_pet_removed(pid)
+
+
+## Create or move the drawn building for this state entry.
+func _view_building(b: Dictionary) -> void:
+	var bid := int(b["id"])
+	var node: BuildingView = building_nodes.get(bid)
+	if node == null:
+		node = BuildingView.new()
+		node.setup(b["type"], bid)
+		ysort.add_child(node)
+		building_nodes[bid] = node
+	var size: Vector2i = Data.BUILDINGS[b["type"]]["size"]
+	node.position = WorldMap.cell_to_world(b["cell"]) + Vector2(size.x * T / 2.0, size.y * T)
+
+
+func _view_building_removed(_bid: int) -> void:
+	pass
+
+
+func _view_pet_added(_pid: int, _actor: PetActor) -> void:
+	pass
+
+
+func _view_pet_removed(_pid: int) -> void:
+	pass
+
+
+## Floating reward text at a point in the world (2D world coordinates).
+func float_text(text: String, pos: Vector2, col: Color) -> void:
+	overlay.float_text(text, pos, col)
 
 
 func _on_node_changed(cell: Vector2i) -> void:
@@ -208,7 +246,7 @@ func _on_produced(pid: int, _bid: int, r: String, amount: int) -> void:
 	var node: Node2D = pet_nodes.get(pid)
 	if node == null:
 		return
-	overlay.float_text("+%d %s" % [amount, Data.RESOURCES[r]["name"].to_lower()], node.position + Vector2(0, -50),
+	float_text("+%d %s" % [amount, Data.RESOURCES[r]["name"].to_lower()], node.position + Vector2(0, -50),
 		Color(Data.RESOURCES[r]["color"]).lightened(0.35))
 
 
@@ -273,7 +311,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			var start2: Vector2 = _tap_start.get(event.index, event.position)
 			if _panning or start2.distance_to(event.position) >= PAN_THRESHOLD:
 				_panning = true
-				pan_camera(-event.relative / zoom_level)
+				pan_camera_screen(event.relative)
+
+
+## One finger dragging across the screen by `rel` pixels.
+func pan_camera_screen(rel: Vector2) -> void:
+	pan_camera(-rel / zoom_level)
 
 
 ## Move the camera without moving the Keeper (drag to look around).
@@ -317,14 +360,7 @@ func tap_world(p: Vector2) -> void:
 
 func start_placing(type: String) -> void:
 	placing = type
-	if ghost == null:
-		ghost = BuildingView.new()
-		ghost.ghost = true
-		ghost.z_index = 40
-		add_child(ghost)
-	ghost.setup(type, -1)
-	ghost.z_index = 40
-	ghost.visible = true
+	_ghost_show(type)
 	var size: Vector2i = Data.BUILDINGS[type]["size"]
 	var kc := WorldMap.world_to_cell(keeper.position)
 	ghost_cell = kc + Vector2i(1, -size.y)
@@ -332,12 +368,10 @@ func start_placing(type: String) -> void:
 
 
 func _update_ghost() -> void:
-	if ghost == null or placing == "":
+	if placing == "":
 		return
-	var size: Vector2i = Data.BUILDINGS[placing]["size"]
-	ghost.position = WorldMap.cell_to_world(ghost_cell) + Vector2(size.x * T / 2.0, size.y * T)
 	ghost_reason = Game.can_place(placing, ghost_cell)
-	ghost.ghost_ok = ghost_reason == ""
+	_ghost_move(ghost_cell, ghost_reason == "")
 	hud.update_placement(placing, ghost_reason)
 
 
@@ -365,9 +399,32 @@ func confirm_place() -> void:
 
 func cancel_place() -> void:
 	placing = ""
+	_ghost_hide()
+	hud.update_placement("", "")
+
+
+func _ghost_show(type: String) -> void:
+	if ghost == null:
+		ghost = BuildingView.new()
+		ghost.ghost = true
+		ghost.z_index = 40
+		add_child(ghost)
+	ghost.setup(type, -1)
+	ghost.z_index = 40
+	ghost.visible = true
+
+
+func _ghost_move(cell: Vector2i, ok: bool) -> void:
+	if ghost == null:
+		return
+	var size: Vector2i = Data.BUILDINGS[placing]["size"]
+	ghost.position = WorldMap.cell_to_world(cell) + Vector2(size.x * T / 2.0, size.y * T)
+	ghost.ghost_ok = ok
+
+
+func _ghost_hide() -> void:
 	if ghost:
 		ghost.visible = false
-	hud.update_placement("", "")
 
 
 # ================================================================ per-frame
@@ -390,8 +447,18 @@ func unstick_keeper() -> void:
 		if best != Vector2.INF:
 			keeper.position = best
 			if not cam_free:
-				cam.position = keeper.position
+				snap_camera()
 			return
+
+
+## Joystick / keys are screen directions; the 2D view's screen is the world.
+func _screen_dir_to_world(dir: Vector2) -> Vector2:
+	return dir
+
+
+func _follow_camera(_delta: float) -> void:
+	if not cam_free:
+		cam.position = keeper.position
 
 
 func _blocked(p: Vector2) -> bool:
@@ -413,6 +480,7 @@ func _process(delta: float) -> void:
 		if Input.is_physical_key_pressed(KEY_S): dir.y += 1.0
 		dir += hud.joystick.value
 		dir += auto_dir
+		dir = _screen_dir_to_world(dir)
 	if dir.length() > 0.1:
 		cam_free = false # moving brings the camera back to the Keeper
 	dir = dir.limit_length(1.0)
@@ -429,8 +497,8 @@ func _process(delta: float) -> void:
 	keeper.moving = keeper.position.distance_to(before) > 0.01
 	if absf(dir.x) > 0.1:
 		keeper.facing = signf(dir.x)
-	if not cam_free:
-		cam.position = keeper.position
+	move_dir = dir
+	_follow_camera(delta)
 
 	var e := Game.carried_egg()
 	keeper.egg_type = "" if e.is_empty() else str(e["type"])
@@ -511,7 +579,7 @@ func do_action() -> void:
 			var b := Game.find_building(int(action["bid"]))
 			if not b.is_empty():
 				Game.add_build_progress(b, 1.0)
-				overlay.float_text("+1 build", keeper.position + Vector2(0, -110), Color("#ffc27a"))
+				float_text("+1 build", keeper.position + Vector2(0, -110), Color("#ffc27a"))
 				Game.changed.emit()
 		"gather":
 			var node: String = action["node"]
@@ -523,5 +591,5 @@ func do_action() -> void:
 				var rn: String = Data.NODES[node]["res"]
 				hud.toast("Your %s store is full! Build a Storehouse, or sell some at the Market." % Data.RESOURCES[rn]["name"].to_lower())
 			elif r != "" and r != "empty":
-				overlay.float_text("+1 %s" % Data.RESOURCES[r]["name"].to_lower(), keeper.position + Vector2(0, -110),
+				float_text("+1 %s" % Data.RESOURCES[r]["name"].to_lower(), keeper.position + Vector2(0, -110),
 					Color(Data.RESOURCES[r]["color"]).lightened(0.35))

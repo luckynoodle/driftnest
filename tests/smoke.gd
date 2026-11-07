@@ -339,6 +339,32 @@ func _run() -> void:
 	_check(Game.load_game(), "save loads")
 	_check(Game.pets.size() == n_pets and Game.buildings.size() == n_b, "save round-trips")
 
+	# --- 3D view: tap picking, turning the camera, joystick follows the camera
+	if main.has_method("_tap_screen"):
+		await _close_all()
+		main.cancel_place()
+		main.snap_camera()
+		await _wait(0.3)
+		var pid: int = main.p3d.keys()[0]
+		var pnode: Node3D = main.p3d[pid]
+		var sp: Vector2 = main.cam3d.unproject_position(pnode.global_position + Vector3(0, 0.45 * pnode.scale.y, 0))
+		main._tap_screen(sp)
+		await _wait(0.2)
+		_check(main.hud.is_modal_open(), "3D: tapping a pet opens it")
+		await _close_all()
+		var th: Dictionary = Game.buildings_of("town_hall")[0]
+		var tnode: Node3D = main.building_nodes[int(th["id"])]
+		main._tap_screen(main.cam3d.unproject_position(tnode.global_position + Vector3(0, 1.0, 0)))
+		await _wait(0.2)
+		_check(main.hud.is_modal_open(), "3D: tapping a building opens it")
+		await _close_all()
+		main.rotate_view(PI / 2.0)
+		var d: Vector2 = main._screen_dir_to_world(Vector2(1, 0))
+		_check(d.distance_to(Vector2(0, -1)) < 0.01 or d.distance_to(Vector2(0, 1)) < 0.01, "3D: joystick turns with the camera")
+		main.rotate_view(-PI / 2.0)
+		var g: Vector2 = main.screen_to_world(main.cam3d.unproject_position(Terrain3D.to3(main.keeper.position)))
+		_check(g.distance_to(main.keeper.position) < 20.0, "3D: screen taps land on the right ground spot")
+
 	# --- the Keeper moves only with the joystick, and never gets trapped by a new building
 	await _close_all()
 	main.cancel_place()

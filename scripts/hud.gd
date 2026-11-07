@@ -445,6 +445,17 @@ func _build_menu_buttons() -> void:
 	zoom.add_child(zout)
 	zoom.add_child(zin)
 	box.add_child(zoom)
+	if main != null and main.has_method("turn_view"):
+		# the 3D camera can turn around the Keeper
+		var turn := _hbox(8)
+		var tl := _small_button("<", func(): main.turn_view(-1), Color("#8a7ac6"))
+		var tr := _small_button(">", func(): main.turn_view(1), Color("#8a7ac6"))
+		for b in [tl, tr]:
+			b.custom_minimum_size = Vector2(58, 44)
+			b.add_theme_font_size_override("font_size", 24)
+			b.tooltip_text = "Turn the camera (or Q / E, or twist two fingers)"
+			turn.add_child(b)
+		box.add_child(turn)
 	fps_label = _label("", 15, Color.WHITE)
 	fps_label.add_theme_color_override("font_outline_color", Color("#3b2a2a"))
 	fps_label.add_theme_constant_override("outline_size", 6)
@@ -1398,6 +1409,7 @@ func open_settings() -> void:
 	var vb := _open_window("Settings", 720, 600, true, "settings")
 	var body := _scroll(vb)
 	body.add_child(_section("Graphics"))
+	_toggle_row(body, "3D town", "The new 3D look. Turn off to go back to the classic 2D town (same save).", "view3d")
 	_toggle_row(body, "Visual effects", "Edge blur, sunlight and vignette. Turn off if the game feels slow.", "effects")
 	_toggle_row(body, "Butterflies and pollen", "", "ambient")
 	_toggle_row(body, "Show frame rate", "A counter under the menu buttons, for testing.", "show_fps")

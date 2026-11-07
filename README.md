@@ -42,7 +42,9 @@ Pets keep working while the game is closed, for up to **8 hours**. You get a "we
 
 The map is an open 80×80-tile meadow: forest to the west, rocks to the north, a berry patch, a lake to the south-east, and crystal hills to the east. There's a tutorial goal chain in the top-left that walks new players through all of it.
 
-Controls: WASD / arrows or the on-screen stick to walk. Tap pets and buildings to manage them. Hold the action button near trees, rocks, bushes, water or construction sites to gather or help. Zoom with +/-, the mouse wheel or a pinch.
+The town is 3D by default (Settings > 3D town switches back to the classic 2D view; same save).
+
+Controls: WASD / arrows or the on-screen stick to walk. Tap pets and buildings to manage them. Hold the action button near trees, rocks, bushes, water or construction sites to gather or help. Zoom with +/-, the mouse wheel or a pinch. In 3D, turn the camera with the < > buttons, Q / E, right-drag, or a two-finger twist; drag one finger to look around.
 
 ## Project layout
 
@@ -50,7 +52,11 @@ Controls: WASD / arrows or the on-screen stick to walk. Tap pets and buildings t
 scripts/data.gd          ALL content: species + talents, eggs, jobs, tools, buildings, town levels, goals  ← tune here
 scripts/game.gd          autoload "Game": state, simulation tick, offline catch-up, actions, save/load
 scripts/world_map.gd     seeded map generation (trees, rocks, lake, crystals) on a tile grid
+scripts/boot.gd          starts the 3D or classic 2D town (Settings > 3D town)
 scripts/main.gd          world scene, Keeper movement, taps, building placement, Keeper actions
+scripts/world3d/         the 3D view: main3d.gd (camera, taps, placement), terrain3d.gd (ground, water,
+                         nature), models3d.gd (every model), actors3d.gd (buildings, pets, Keeper),
+                         mesh_kit.gd (merges shapes into one mesh), overlay3d.gd (badges, reward text)
 scripts/hud.gd           all UI (built in code): resource bar, goals, Build menu, building panels, pets, Pet Log, eggs
 scripts/building_view.gd procedural building art (+ construction + placement ghost)
 scripts/pet_actor.gd     pets walking to work / wandering
