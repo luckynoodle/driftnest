@@ -37,7 +37,6 @@ var _tap_start: Dictionary = {}
 var _panning := false
 
 ## Tap-to-walk target (INF = none) and whether the camera has been dragged away from the Keeper.
-var walk_target := Vector2.INF
 var cam_free := false
 const PAN_THRESHOLD := 24.0
 
@@ -193,7 +192,6 @@ func _apply_settings() -> void:
 
 ## Back to the start after a reset: Keeper at the plaza, camera on them.
 func reset_view() -> void:
-	walk_target = Vector2.INF
 	cam_free = false
 	keeper.position = WorldMap.cell_center(Vector2i(40, 43))
 	_sync()
@@ -287,15 +285,6 @@ func pan_camera(world_delta: Vector2) -> void:
 	cam.position = (cam.position + world_delta).clamp(Vector2.ZERO, Vector2(full, full))
 
 
-## Walk the Keeper towards a point (tap to walk). The camera follows again.
-func walk_to(p: Vector2) -> void:
-	if Game.map.water.has(WorldMap.world_to_cell(p)):
-		return
-	walk_target = p
-	cam_free = false
-	overlay.mark_target(p)
-
-
 func tap_world(p: Vector2) -> void:
 	if placing != "":
 		var size: Vector2i = Data.BUILDINGS[placing]["size"]
@@ -321,7 +310,7 @@ func tap_world(p: Vector2) -> void:
 		if r.has_point(p):
 			hud.open_building(int(b["id"]))
 			return
-	walk_to(p)
+	# tapping open ground does nothing: the Keeper moves with the joystick
 
 
 # ================================================================ placement
@@ -364,6 +353,8 @@ func confirm_place() -> void:
 	if b.is_empty():
 		_update_ghost()
 		return
+	_sync()
+	unstick_keeper()
 	if bool(Data.BUILDINGS[placing].get("deco", false)) and Game.can_afford(Game.build_cost(placing)):
 		# keep placing decorations; nudge the ghost along
 		ghost_cell += Vector2i(Data.BUILDINGS[placing]["size"].x, 0)
@@ -380,6 +371,28 @@ func cancel_place() -> void:
 
 
 # ================================================================ per-frame
+
+## If the Keeper is standing inside something solid (a building just placed on top of them),
+## step them out to the nearest free spot.
+func unstick_keeper() -> void:
+	if not _blocked(keeper.position):
+		return
+	var kc := WorldMap.world_to_cell(keeper.position)
+	var best := Vector2.INF
+	for r in range(1, 8):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var p := WorldMap.cell_center(kc + Vector2i(dx, dy))
+				if not _blocked(p) and p.distance_to(keeper.position) < best.distance_to(keeper.position):
+					best = p
+		if best != Vector2.INF:
+			keeper.position = best
+			if not cam_free:
+				cam.position = keeper.position
+			return
+
 
 func _blocked(p: Vector2) -> bool:
 	var c := WorldMap.world_to_cell(p)
@@ -401,24 +414,18 @@ func _process(delta: float) -> void:
 		dir += hud.joystick.value
 		dir += auto_dir
 	if dir.length() > 0.1:
-		# manual control cancels tap-to-walk and brings the camera back
-		walk_target = Vector2.INF
-		cam_free = false
-	elif walk_target != Vector2.INF and not modal:
-		var to := walk_target - keeper.position
-		if to.length() < 10.0:
-			walk_target = Vector2.INF
-		else:
-			dir = to.normalized()
+		cam_free = false # moving brings the camera back to the Keeper
 	dir = dir.limit_length(1.0)
 	var mv := dir * SPEED * delta
 	var before := keeper.position
-	if not _blocked(keeper.position + Vector2(mv.x, 0)):
+	# never trap the Keeper: if they're already inside something solid, let them walk out
+	var inside := _blocked(keeper.position)
+	if inside or not _blocked(keeper.position + Vector2(mv.x, 0)):
 		keeper.position.x += mv.x
-	if not _blocked(keeper.position + Vector2(0, mv.y)):
+	if inside or not _blocked(keeper.position + Vector2(0, mv.y)):
 		keeper.position.y += mv.y
-	if walk_target != Vector2.INF and dir.length() > 0.1 and keeper.position.distance_to(before) < mv.length() * 0.2:
-		walk_target = Vector2.INF # bumped into something
+	var full := WorldMap.SIZE * T
+	keeper.position = keeper.position.clamp(Vector2(T, T), Vector2(full - T, full - T))
 	keeper.moving = keeper.position.distance_to(before) > 0.01
 	if absf(dir.x) > 0.1:
 		keeper.facing = signf(dir.x)

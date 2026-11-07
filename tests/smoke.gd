@@ -339,6 +339,27 @@ func _run() -> void:
 	_check(Game.load_game(), "save loads")
 	_check(Game.pets.size() == n_pets and Game.buildings.size() == n_b, "save round-trips")
 
+	# --- the Keeper moves only with the joystick, and never gets trapped by a new building
+	await _close_all()
+	main.cancel_place()
+	var kp: Vector2 = main.keeper.position
+	main.tap_world(kp + Vector2(400, 0))
+	await _wait(0.4)
+	_check(main.keeper.position.distance_to(kp) < 1.0, "tapping the ground doesn't move the Keeper")
+	for r in ["wood", "stone", "berries"]:
+		Game.res[r] = Game.storage_cap(r)
+	var spot := _find_spot("storehouse")
+	main.keeper.position = WorldMap.cell_center(spot)
+	main.start_placing("storehouse")
+	main.ghost_cell = spot
+	main._update_ghost()
+	main.confirm_place()
+	_check(not main._blocked(main.keeper.position), "Keeper steps out from under a new building")
+	main.keeper.position = WorldMap.cell_center(spot)
+	main.hud.joystick.value = Vector2(0, 1)
+	await _wait(0.6)
+	main.hud.joystick.value = Vector2.ZERO
+	_check(main.keeper.position.distance_to(WorldMap.cell_center(spot)) > 20.0, "Keeper can walk out of a building")
 	await _save_tests()
 
 	Game.reset_save()
