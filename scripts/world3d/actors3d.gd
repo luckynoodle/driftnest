@@ -59,6 +59,32 @@ class Building3D extends Node3D:
 			smoke.position = Vector3(0.45 if type == "house" else -0.5, 2.4, -0.2)
 			smoke.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(smoke)
+		if type == "fountain":
+			# water spray arcing out of the top bowl (uses the smoke slot so it stops while building)
+			smoke = CPUParticles3D.new()
+			smoke.amount = 26
+			smoke.lifetime = 0.9
+			smoke.direction = Vector3.UP
+			smoke.spread = 28.0
+			smoke.initial_velocity_min = 1.3
+			smoke.initial_velocity_max = 1.6
+			smoke.gravity = Vector3(0, -4.2, 0)
+			smoke.scale_amount_min = 0.035
+			smoke.scale_amount_max = 0.055
+			var dm := SphereMesh.new()
+			dm.radius = 1.0
+			dm.height = 2.0
+			dm.radial_segments = 6
+			dm.rings = 3
+			var dmat := StandardMaterial3D.new()
+			dmat.albedo_color = Color(0.82, 0.95, 1.0, 0.75)
+			dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			dm.material = dmat
+			smoke.mesh = dm
+			smoke.position = Vector3(0, 1.38, 0)
+			smoke.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(smoke)
 
 	func refresh(b: Dictionary) -> void:
 		var size: Vector2i = Data.BUILDINGS[type]["size"]

@@ -21,6 +21,43 @@ var _chunks: Dictionary = {}
 var _depleted: Dictionary = {}
 
 static var _hnoise: FastNoiseLite
+static var _ground_mat: ShaderMaterial
+
+## Soft cloud shadows drift across the meadow. `clouds` 0..1 fades them (off at night).
+const GROUND_SHADER := """
+shader_type spatial;
+uniform float clouds = 1.0;
+varying vec3 wpos;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec3 c = COLOR.rgb;
+	c = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+	vec2 p = wpos.xz * 0.055 + vec2(TIME * 0.014, TIME * 0.006);
+	float n = vnoise(p) * 0.65 + vnoise(p * 2.3 + 7.0) * 0.35;
+	float sh = smoothstep(0.56, 0.72, n) * clouds;
+	ALBEDO = c * (1.0 - sh * 0.3);
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.1;
+}
+"""
+
+
+static func ground_material() -> ShaderMaterial:
+	if _ground_mat == null:
+		var sh := Shader.new()
+		sh.code = GROUND_SHADER
+		_ground_mat = ShaderMaterial.new()
+		_ground_mat.shader = sh
+	return _ground_mat
 
 
 # ================================================================ heights
@@ -138,12 +175,7 @@ func _build_ground() -> void:
 	arr[Mesh.ARRAY_INDEX] = idx
 	var am := ArrayMesh.new()
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	var m := StandardMaterial3D.new()
-	m.vertex_color_use_as_albedo = true
-	m.vertex_color_is_srgb = true
-	m.roughness = 1.0
-	m.metallic_specular = 0.1
-	am.surface_set_material(0, m)
+	am.surface_set_material(0, ground_material())
 	var mi := MeshInstance3D.new()
 	mi.mesh = am
 	mi.name = "Ground"

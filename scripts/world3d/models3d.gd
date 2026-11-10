@@ -480,15 +480,33 @@ static func _cottage(k: MeshKit, w: float, d: float, wall_h: float, roof_col: Co
 		k.box(Vector3(x, 0.18 + wall_h / 2.0, fz), Vector3(0.1, wall_h, 0.06), BEAM)
 	k.box(Vector3(0, 0.18 + wall_h - 0.04, fz), Vector3(w, 0.1, 0.06), BEAM)
 	k.roof(Vector3(0, 0.18 + wall_h, 0), w, d, roof_h, roof_col)
-	# door
+	# door with frame and a step stone
+	k.box(Vector3(-w * 0.17, 0.62, fz + 0.005), Vector3(0.58, 0.88, 0.05), BEAM)
 	k.box(Vector3(-w * 0.17, 0.6, fz + 0.01), Vector3(0.48, 0.8, 0.06), door_col)
+	k.box(Vector3(-w * 0.17, 0.6, fz + 0.045), Vector3(0.42, 0.04, 0.02), door_col.darkened(0.2))
 	k.ball(Vector3(-w * 0.17 + 0.14, 0.6, fz + 0.06), 0.035, Color("#f2c14e"), 6)
+	k.ellipse(Vector3(-w * 0.17, 0.05, fz + 0.18), 0.3, 0.14, 0.06, STONE, 10)
+	# stones along the base
+	for i in int(w / 0.3):
+		k.box(Vector3(-w / 2.0 + 0.15 + i * 0.3, 0.24, fz + 0.005), Vector3(0.26, 0.1, 0.04), Color("#cfc6b6") if i % 2 == 0 else Color("#bfb6a6"))
+	# side windows (seen when the camera turns)
+	for sx in [-1.0, 1.0]:
+		k.glowing = true
+		k.box(Vector3(sx * (w / 2.0 + 0.005), 0.95, 0.0), Vector3(0.05, 0.36, 0.36), WINDOW)
+		k.glowing = false
+		k.box(Vector3(sx * (w / 2.0 + 0.03), 0.95, 0.0), Vector3(0.04, 0.36, 0.05), BEAM)
+		k.box(Vector3(sx * (w / 2.0 + 0.03), 0.76, 0.0), Vector3(0.06, 0.05, 0.46), BEAM)
 	# window with flower box
 	var wx := w * 0.24
 	k.glowing = true
 	k.box(Vector3(wx, 0.95, fz + 0.01), Vector3(0.44, 0.4, 0.05), WINDOW)
 	k.glowing = false
 	k.box(Vector3(wx, 0.95, fz + 0.04), Vector3(0.05, 0.4, 0.05), BEAM)
+	k.box(Vector3(wx, 0.95, fz + 0.04), Vector3(0.44, 0.04, 0.05), BEAM)
+	for sx in [-1.0, 1.0]:
+		k.box(Vector3(wx + sx * 0.29, 0.95, fz + 0.03), Vector3(0.12, 0.44, 0.03), door_col.lightened(0.15))
+		for j in 3:
+			k.box(Vector3(wx + sx * 0.29, 0.83 + j * 0.12, fz + 0.05), Vector3(0.1, 0.02, 0.01), door_col.darkened(0.1))
 	k.box(Vector3(wx, 0.71, fz + 0.06), Vector3(0.54, 0.06, 0.1), BEAM)
 	k.box(Vector3(wx, 0.63, fz + 0.1), Vector3(0.54, 0.12, 0.16), Color("#a0673f"))
 	var fc := [Color("#ff7a90"), Color("#ffd166"), Color("#ff9ec4"), Color("#ffffff")]
@@ -695,7 +713,182 @@ static func _build_building(type: String, variant: int) -> ArrayMesh:
 			k.ball(Vector3(0.5, 0.7, 0.5), 0.08, Color("#c58cff"), 8)
 		_:
 			k.box(Vector3(0, 0.5, 0), Vector3(1.6, 1.0, 1.6), WALL)
+	_details(k, type, variant)
 	return k.commit()
+
+
+# ---------------------------------------------------------------- small props
+
+static func _barrel(k: MeshKit, p: Vector3, s := 1.0) -> void:
+	k.cyl(p + Vector3(0, 0.18 * s, 0), 0.13 * s, 0.13 * s, 0.36 * s, WOOD, 12)
+	k.cyl(p + Vector3(0, 0.18 * s, 0), 0.145 * s, 0.145 * s, 0.2 * s, WOOD_LIGHT, 12)
+	for y in [0.06, 0.3]:
+		k.cyl(p + Vector3(0, y * s, 0), 0.14 * s, 0.14 * s, 0.03 * s, Color("#5a4a40"), 12)
+
+
+static func _crate(k: MeshKit, p: Vector3, s := 1.0, rot := 0.0) -> void:
+	k.push(MeshKit.xform(p + Vector3(0, 0.15 * s, 0), Vector3(0, rot, 0)))
+	k.box(Vector3.ZERO, Vector3(0.3, 0.3, 0.3) * s, WOOD_LIGHT)
+	for sx in [-1.0, 1.0]:
+		k.box(Vector3(0, 0, sx * 0.152 * s), Vector3(0.3 * s, 0.05 * s, 0.01), WOOD)
+		k.box(Vector3(sx * 0.152 * s, 0, 0), Vector3(0.01, 0.05 * s, 0.3 * s), WOOD)
+		k.box(Vector3(0, 0, sx * 0.152 * s), Vector3(0.05 * s, 0.3 * s, 0.01), WOOD)
+	k.pop()
+
+
+static func _sack(k: MeshKit, p: Vector3, col := Color("#e2cfa2")) -> void:
+	k.sphere(p + Vector3(0, 0.13, 0), Vector3(0.13, 0.14, 0.11), col, 10)
+	k.cyl(p + Vector3(0, 0.27, 0), 0.03, 0.05, 0.06, col.darkened(0.15), 8)
+
+
+## A small lantern that glows at night.
+static func _lantern(k: MeshKit, p: Vector3) -> void:
+	k.box(p + Vector3(0, 0.1, 0), Vector3(0.12, 0.03, 0.12), Color("#4a4a5a"))
+	k.cyl(p + Vector3(0, 0.15, 0), 0.008, 0.008, 0.08, Color("#4a4a5a"), 4)
+	k.glowing = true
+	k.box(p, Vector3(0.09, 0.15, 0.09), Color("#ffe39a"))
+	k.glowing = false
+	k.box(p - Vector3(0, 0.09, 0), Vector3(0.11, 0.03, 0.11), Color("#4a4a5a"))
+
+
+static func _pot(k: MeshKit, p: Vector3, flower: Color) -> void:
+	k.cyl(p + Vector3(0, 0.09, 0), 0.11, 0.08, 0.18, Color("#c0714a"), 10)
+	k.ball(p + Vector3(0, 0.24, 0), 0.11, Color("#4f9e4a"), 10)
+	for i in 3:
+		var a := TAU * i / 3.0
+		k.ball(p + Vector3(cos(a) * 0.06, 0.31, sin(a) * 0.06), 0.045, flower, 6)
+
+
+static func _bench(k: MeshKit, p: Vector3, rot := 0.0) -> void:
+	k.push(MeshKit.xform(p, Vector3(0, rot, 0)))
+	k.box(Vector3(0, 0.2, 0), Vector3(0.6, 0.04, 0.2), WOOD_LIGHT)
+	k.box(Vector3(0, 0.36, -0.09), Vector3(0.6, 0.12, 0.03), WOOD_LIGHT)
+	for sx in [-1.0, 1.0]:
+		k.box(Vector3(sx * 0.25, 0.1, 0), Vector3(0.04, 0.2, 0.18), WOOD_DARK)
+	k.pop()
+
+
+static func _fence(k: MeshKit, a: Vector3, b: Vector3) -> void:
+	var n := maxi(1, int(a.distance_to(b) / 0.3))
+	for i in n + 1:
+		k.box(a.lerp(b, float(i) / n) + Vector3(0, 0.15, 0), Vector3(0.05, 0.3, 0.05), WOOD_LIGHT)
+	var mid := (a + b) / 2.0
+	var ang := rad_to_deg(atan2(b.x - a.x, b.z - a.z)) - 90.0
+	for y in [0.12, 0.24]:
+		k.box(mid + Vector3(0, y, 0), Vector3(a.distance_to(b), 0.03, 0.02), WOOD, Vector3(0, ang, 0))
+
+
+static func _hay(k: MeshKit, p: Vector3) -> void:
+	k.cyl(p + Vector3(0, 0.14, 0), 0.14, 0.14, 0.34, Color("#e6c46a"), 12, Vector3(0, 0, 90))
+	k.cyl(p + Vector3(0, 0.14, 0), 0.145, 0.145, 0.03, Color("#c9a24a"), 12, Vector3(0, 0, 90))
+
+
+## Extra props that make each building feel lived in (all inside the footprint).
+static func _details(k: MeshKit, type: String, variant: int) -> void:
+	var flowers := [Color("#ff7a90"), Color("#ffd166"), Color("#b48cff"), Color("#ffffff"), Color("#ff9e5e")]
+	match type:
+		"town_hall":
+			_lantern(k, Vector3(-0.85, 1.05, 1.2))
+			_lantern(k, Vector3(-0.1, 1.05, 1.2))
+			_pot(k, Vector3(-1.25, 0.0, 1.3), flowers[0])
+			_pot(k, Vector3(0.3, 0.0, 1.3), flowers[1])
+			_bench(k, Vector3(0.95, 0.0, 1.32))
+			for sx in [-1.0, 1.0]:
+				k.glowing = true
+				k.box(Vector3(sx * 0.456, 2.55, 0.1), Vector3(0.03, 0.4, 0.22), WINDOW)
+				k.glowing = false
+			k.box(Vector3(0, 3.4, 0.1), Vector3(0.98, 0.07, 0.98), BEAM)
+			k.box(Vector3(0, 1.98, 0.1), Vector3(0.98, 0.07, 0.98), BEAM)
+		"house":
+			_pot(k, Vector3(-0.83, 0.0, 0.86), flowers[variant % flowers.size()])
+			match variant % 3:
+				0:
+					_barrel(k, Vector3(0.8, 0.0, 0.85), 0.8)
+				1:
+					_bench(k, Vector3(0.55, 0.0, 0.9))
+				2:
+					k.cyl(Vector3(0.82, 0.35, 0.86), 0.025, 0.025, 0.7, WOOD_DARK, 6)
+					k.box(Vector3(0.82, 0.72, 0.86), Vector3(0.16, 0.12, 0.22), Color("#4f7fd6"))
+			_lantern(k, Vector3(0.0, 1.05, 0.82))
+		"builder_hut":
+			_crate(k, Vector3(-0.72, 0.0, 0.82), 0.9, 15)
+			_crate(k, Vector3(-0.72, 0.27, 0.82), 0.7, 40)
+			k.box(Vector3(0.3, 0.04, 0.86), Vector3(0.7, 0.05, 0.12), WOOD_LIGHT, Vector3(0, 8, 0))
+			k.box(Vector3(0.3, 0.09, 0.86), Vector3(0.7, 0.05, 0.12), WOOD, Vector3(0, -4, 0))
+		"storehouse":
+			_hay(k, Vector3(0.68, 0.0, 0.92))
+			_hay(k, Vector3(0.68, 0.27, 0.92))
+			_sack(k, Vector3(-0.32, 0.0, 0.95))
+			_sack(k, Vector3(0.36, 0.0, 0.95), Color("#d6c08e"))
+			_lantern(k, Vector3(0.0, 1.25, 0.85))
+		"lumber_camp":
+			for sx in [-1.0, 1.0]:
+				k.box(Vector3(-0.35 + sx * 0.25, 0.18, 0.55), Vector3(0.04, 0.36, 0.25), WOOD_DARK, Vector3(0, 0, sx * 12))
+			k.cyl(Vector3(-0.35, 0.4, 0.55), 0.1, 0.1, 0.8, WOOD_LIGHT, 8, Vector3(0, 0, 90))
+			k.box(Vector3(-0.2, 0.55, 0.55), Vector3(0.36, 0.08, 0.01), Color("#c0c6cc"), Vector3(0, 0, -20))
+			_lantern(k, Vector3(0.75, 1.0, 0.68))
+		"berry_farm":
+			_fence(k, Vector3(-0.9, 0, 0.9), Vector3(-0.3, 0, 0.9))
+			_fence(k, Vector3(0.3, 0, 0.9), Vector3(0.9, 0, 0.9))
+			_fence(k, Vector3(-0.9, 0, -0.9), Vector3(0.9, 0, -0.9))
+			# scarecrow between the rows
+			k.cyl(Vector3(0.82, 0.45, 0.0), 0.025, 0.025, 0.9, WOOD_DARK, 6)
+			k.box(Vector3(0.82, 0.7, 0.0), Vector3(0.03, 0.03, 0.5), WOOD_DARK)
+			k.sphere(Vector3(0.82, 0.62, 0.0), Vector3(0.08, 0.16, 0.12), Color("#d0503f"), 10)
+			k.ball(Vector3(0.82, 0.9, 0.0), 0.1, Color("#f2dfb0"), 10)
+			k.cyl(Vector3(0.82, 0.98, 0.0), 0.16, 0.16, 0.02, Color("#e8c77a"), 12)
+			k.cyl(Vector3(0.82, 1.03, 0.0), 0.08, 0.09, 0.08, Color("#e8c77a"), 10)
+			# watering can
+			k.cyl(Vector3(-0.8, 0.09, 0.0), 0.07, 0.07, 0.16, Color("#5ea0c8"), 10)
+			k.cyl(Vector3(-0.7, 0.14, 0.0), 0.012, 0.02, 0.15, Color("#5ea0c8"), 6, Vector3(0, 0, -55))
+		"quarry":
+			# a cart of stone
+			k.box(Vector3(-0.15, 0.24, 0.8), Vector3(0.45, 0.2, 0.28), WOOD)
+			for sx in [-1.0, 1.0]:
+				k.cyl(Vector3(-0.15 + sx * 0.15, 0.1, 0.8), 0.1, 0.1, 0.32, WOOD_DARK, 10, Vector3(90, 0, 0))
+			for i in 3:
+				k.sphere(Vector3(-0.26 + i * 0.11, 0.38, 0.8), Vector3(0.07, 0.06, 0.07), STONE, 6)
+			k.box(Vector3(0.15, 0.12, -0.8), Vector3(0.25, 0.22, 0.25), STONE_DARK)
+			k.box(Vector3(0.15, 0.32, -0.8), Vector3(0.22, 0.18, 0.22), STONE)
+		"workshop":
+			_crate(k, Vector3(-0.75, 0.0, 0.88), 0.8, 10)
+			_barrel(k, Vector3(-0.92, 0.0, 0.45), 0.75)
+			_lantern(k, Vector3(0.01, 1.05, 0.83))
+		"kiosk", "market":
+			_lantern(k, Vector3(-0.72, 1.45, 0.45))
+			_lantern(k, Vector3(0.72, 1.45, 0.45))
+			if type == "market":
+				_sack(k, Vector3(-0.85, 0.0, 0.85))
+				_barrel(k, Vector3(0.85, 0.0, 0.82), 0.75)
+			else:
+				_pot(k, Vector3(0.85, 0.0, 0.82), flowers[2])
+				_pot(k, Vector3(-0.85, 0.0, 0.82), flowers[0])
+		"fishing_dock":
+			_barrel(k, Vector3(-0.75, 0.15, 0.85), 0.7)
+			k.cyl(Vector3(0.82, 0.35, 0.95), 0.02, 0.02, 0.5, WOOD_DARK, 4)
+			_lantern(k, Vector3(0.82, 0.68, 0.95))
+			# a coiled net
+			k.torus(Vector3(0.15, 0.18, 0.75), 0.06, 0.16, Color("#d8cfae"), Vector3.ZERO, Vector3(1, 0.5, 1))
+			k.torus(Vector3(0.15, 0.21, 0.75), 0.04, 0.12, Color("#c9bf9a"), Vector3.ZERO, Vector3(1, 0.5, 1))
+		"explorer_lodge":
+			_lantern(k, Vector3(0.75, 1.27, 0.55))
+			k.sphere(Vector3(0.32, 0.15, 0.82), Vector3(0.13, 0.16, 0.1), Color("#5f8f4a"), 10)
+			k.box(Vector3(0.32, 0.12, 0.91), Vector3(0.14, 0.1, 0.03), Color("#4a7a3a"))
+		"crystal_mine":
+			for sx in [-1.0, 1.0]:
+				k.box(Vector3(sx * 0.15, 0.04, 0.8), Vector3(0.03, 0.03, 0.42), Color("#7a7f88"))
+			for i in 3:
+				k.box(Vector3(0, 0.02, 0.66 + i * 0.13), Vector3(0.42, 0.02, 0.05), WOOD_DARK)
+			_lantern(k, Vector3(0.5, 0.78, 0.66))
+		"nest":
+			for i in 6:
+				var a := TAU * i / 6.0 + 0.3
+				k.box(Vector3(cos(a) * 0.93, 0.02, sin(a) * 0.93), Vector3(0.18, 0.015, 0.03), Color("#e1c48d"), Vector3(0, rad_to_deg(a) * 1.7, 0))
+		"fountain":
+			for i in 8:
+				var a := TAU * i / 8.0
+				k.box(Vector3(cos(a) * 0.94, 0.45, sin(a) * 0.94), Vector3(0.22, 0.05, 0.14), STONE.lightened(0.1), Vector3(0, -rad_to_deg(a), 0))
+
 
 
 ## The wooden frame around a building that's still being put up.

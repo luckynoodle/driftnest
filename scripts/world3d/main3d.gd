@@ -20,6 +20,7 @@ var b3d: Dictionary = {} # same dict as building_nodes
 var p3d: Dictionary = {} # pid -> Pet3D
 var overlay3d: Overlay3D
 var daynight: DayNight
+var ambient3d: Ambient3D
 var shadow_sun_k := SHADOW_SUN_K
 
 var yaw := 0.0
@@ -79,6 +80,11 @@ func _build_world() -> void:
 	daynight = DayNight.new()
 	daynight.main = self
 	world.add_child(daynight)
+	ambient3d = Ambient3D.new()
+	ambient3d.main = self
+	world.add_child(ambient3d)
+	if "--flock" in OS.get_cmdline_user_args():
+		ambient3d.flock_now.call_deferred()
 
 
 func _build_view_extras() -> void:
