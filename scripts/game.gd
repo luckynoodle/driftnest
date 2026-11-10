@@ -14,6 +14,7 @@ signal goal_done(index: int)
 signal egg_found(egg: Dictionary)
 signal welcome_back(report: Dictionary)
 signal settings_changed
+signal keeper_changed
 signal node_changed(cell: Vector2i)
 
 const SAVE_PATH := "user://driftnest_save.json"
@@ -30,6 +31,8 @@ var goal_index := 0
 var stats: Dictionary = {}
 var next_id := 1
 var first_run := false
+## How the Keeper looks (see Models3D.KEEPER_DEFAULT). Empty = the default Meadow Keeper.
+var keeper_look := {}
 var offline_report: Dictionary = {}
 
 var map := WorldMap.new()
@@ -118,6 +121,8 @@ func _notification(what: int) -> void:
 
 func new_game() -> void:
 	_fresh_state()
+	keeper_look = {}
+	keeper_changed.emit()
 	first_run = true
 	save_game()
 	changed.emit()
@@ -1078,6 +1083,7 @@ func _to_dict() -> Dictionary:
 		"town_level": town_level, "discovered": discovered.keys(), "goal_index": goal_index,
 		"stats": stats, "next_id": next_id, "house_t": _house_t,
 		"nodes": _nodes_to_list(),
+		"keeper": keeper_look,
 	}
 
 
@@ -1150,6 +1156,13 @@ func _nodes_to_list() -> Array:
 
 
 func _from_dict(d: Dictionary) -> void:
+	keeper_look = {}
+	var kl = d.get("keeper", {})
+	if typeof(kl) == TYPE_DICTIONARY:
+		for k in kl:
+			if Models3D.KEEPER_DEFAULT.has(str(k)):
+				keeper_look[str(k)] = str(kl[k])
+	keeper_changed.emit()
 	res = {}
 	for r in Data.RESOURCES:
 		res[r] = int(d.get("res", {}).get(r, 0))
@@ -1259,6 +1272,16 @@ func _migrate_2(d: Dictionary) -> Dictionary:
 				d["goal_index"] = i
 				break
 	return d
+
+
+## Change how the Keeper looks (only the keys the creator offers are kept).
+func set_keeper_look(look: Dictionary) -> void:
+	keeper_look = {}
+	for k in ["skin", "hair", "hair_col", "outfit", "hat", "hat_col"]:
+		if look.has(k):
+			keeper_look[k] = str(look[k])
+	keeper_changed.emit()
+	save_game()
 
 
 func reset_save() -> void:

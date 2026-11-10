@@ -324,7 +324,7 @@ class Keeper3D extends Node3D:
 	var _egg_type := ""
 
 	func _ready() -> void:
-		var parts := Models3D.keeper_parts()
+		var parts := Models3D.keeper_parts(Game.keeper_look)
 		var root := Node3D.new()
 		root.name = "Root"
 		add_child(root)
@@ -339,6 +339,13 @@ class Keeper3D extends Node3D:
 		egg.position = Vector3(0, 0.42, 0.3)
 		root.add_child(egg)
 		scale = Vector3.ONE * 0.9
+		Game.keeper_changed.connect(_restyle)
+
+	func _restyle() -> void:
+		var parts := Models3D.keeper_parts(Game.keeper_look)
+		body.mesh = parts[0]
+		for i in 2:
+			((legs[i] as Node3D).get_child(0) as MeshInstance3D).mesh = parts[1 + i]
 
 	func _process(delta: float) -> void:
 		if keeper == null:

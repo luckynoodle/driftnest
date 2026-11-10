@@ -86,7 +86,7 @@ func _ready() -> void:
 	refresh()
 	_layout()
 	if Game.first_run:
-		open_help.call_deferred()
+		open_keeper.call_deferred(true)
 	elif Game.migration_note != "":
 		_show_migration.call_deferred()
 	elif not Game.offline_report.is_empty():
@@ -1426,6 +1426,11 @@ func open_settings() -> void:
 		b.custom_minimum_size = Vector2(0, 44)
 		size_row.add_child(b)
 	body.add_child(size_row)
+	body.add_child(_section("Your Keeper"))
+	var kb := _small_button("Change how you look", open_keeper.bind(false), Color("#7a9cc6"))
+	kb.custom_minimum_size = Vector2(0, 44)
+	kb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	body.add_child(kb)
 	body.add_child(_section("Help"))
 	var hb := _hbox(8)
 	var help := _small_button("How to play", open_help, Color("#7a9cc6"))
@@ -1454,7 +1459,7 @@ func _reset_town() -> void:
 	close_modal()
 	Game.reset_save()
 	main.reset_view()
-	open_help.call_deferred()
+	open_keeper.call_deferred(true)
 
 
 func _show_migration() -> void:
@@ -1466,6 +1471,18 @@ func _show_migration() -> void:
 	ok.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	vb.add_child(ok)
 	Game.migration_note = ""
+
+
+# ---------------------------------------------------------------- the Keeper's look
+
+## Pick a Keeper, then make it yours. `first` = a new town: no Close button, How to play follows.
+var keeper_creator: KeeperCreator
+
+
+func open_keeper(first: bool = false) -> void:
+	var vb := _open_window("Pick a Keeper, then make it yours" if first else "Your Keeper", 900, 640, not first, "keeper")
+	keeper_creator = KeeperCreator.new(self, first)
+	vb.add_child(keeper_creator)
 
 
 # ---------------------------------------------------------------- help

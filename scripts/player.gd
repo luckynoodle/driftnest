@@ -8,11 +8,12 @@ var egg_type := ""
 var egg_warm := 0.0
 var t := 0.0
 
-const CLOAK := Color("#3f7a7d")
-const CLOAK_DARK := Color("#2a5153")
-const SKIN := Color("#ffdcbc")
-const HAT := Color("#6b4f9e")
-const SCARF := Color("#ffb347")
+# colours come from the Keeper's chosen look (Game.keeper_look)
+var CLOAK := Color("#3f7a7d")
+var CLOAK_DARK := Color("#2a5153")
+var SKIN := Color("#ffdcbc")
+var HAT := Color("#6b4f9e")
+var _look_key := ""
 const STRAP := Color("#8b5e3c")
 const OW := 3.0
 
@@ -22,7 +23,21 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+func _apply_look() -> void:
+	var lk: Dictionary = Models3D.KEEPER_DEFAULT.duplicate()
+	lk.merge(Game.keeper_look, true)
+	var key := str(lk)
+	if key == _look_key:
+		return
+	_look_key = key
+	CLOAK = Color(str(lk["outfit"]))
+	CLOAK_DARK = CLOAK.darkened(0.33)
+	SKIN = Color(str(lk["skin"]))
+	HAT = Color(str(lk["hat_col"])) if str(lk["hat"]) != "straw" else Color("#e8c77a")
+
+
 func _draw() -> void:
+	_apply_look()
 	PetArt.fast = true
 	var f := facing
 	var step := sin(t * 14.0) if moving else 0.0
@@ -55,8 +70,7 @@ func _draw() -> void:
 	# strap + scarf
 	if egg_type != "":
 		PetArt.stroke(self, flip, Vector2(-14, -64), Vector2(12, -22), STRAP, 4.0, 1.5)
-	PetArt.shape(self, id, [o + Vector2(-16, -62), o + Vector2(16, -62), o + Vector2(14, -70), o + Vector2(0, -66), o + Vector2(-14, -70)], SCARF, OW * 0.8)
-	PetArt.stroke(self, flip, Vector2(9, -60), Vector2(13, -40), SCARF, 6.0, 1.5)
+	PetArt.shape(self, id, [o + Vector2(-16, -62), o + Vector2(16, -62), o + Vector2(14, -70), o + Vector2(0, -66), o + Vector2(-14, -70)], CLOAK.lightened(0.25), OW * 0.8)
 	# arms
 	var swing := step * 6.0
 	PetArt.stroke(self, id, o + Vector2(17, -54), o + Vector2(20 + swing, -32), CLOAK_DARK, 7.0, 1.5)

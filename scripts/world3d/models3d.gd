@@ -285,22 +285,29 @@ static func egg(egg_type: String) -> ArrayMesh:
 
 ## The Keeper's look. Every key is optional; missing ones use the default Keeper.
 const KEEPER_DEFAULT := {"skin": "#f5d7b8", "hair": "short", "hair_col": "#6b4a32", "outfit": "#3f7f7a",
-	"scarf": "#f2a53a", "hat": "leaf_cap", "hat_col": "#7b5cb4", "pants": "#2f4a52"}
+	"hat": "leaf_cap", "hat_col": "#7b5cb4", "pants": "#2f4a52"}
 
 const KEEPER_PRESETS := [
-	{"name": "Meadow", "skin": "#f5d7b8", "hair": "short", "hair_col": "#6b4a32", "outfit": "#3f7f7a", "scarf": "#f2a53a", "hat": "leaf_cap", "hat_col": "#7b5cb4"},
-	{"name": "Harbour", "skin": "#c68a5e", "hair": "curly", "hair_col": "#2b2220", "outfit": "#34508a", "scarf": "#f2d04a", "hat": "bucket", "hat_col": "#f2c84b"},
-	{"name": "Ember", "skin": "#eac0a0", "hair": "bob", "hair_col": "#c45a2c", "outfit": "#e8735a", "scarf": "#fff1dc", "hat": "beret", "hat_col": "#8a3b5c"},
-	{"name": "Aurora", "skin": "#8d5a3b", "hair": "long", "hair_col": "#3a2a24", "outfit": "#9a7fd0", "scarf": "#9fe3c8", "hat": "flowers", "hat_col": "#ffb3c7"},
-	{"name": "Woodland", "skin": "#f0c9a8", "hair": "bun", "hair_col": "#e2b45a", "outfit": "#4f7a3a", "scarf": "#d0503f", "hat": "beanie", "hat_col": "#d0503f"},
-	{"name": "Sunny", "skin": "#5e3a26", "hair": "pigtails", "hair_col": "#241a16", "outfit": "#e0a83a", "scarf": "#3f9a8a", "hat": "straw", "hat_col": "#ef6f5e"},
+	{"name": "Meadow", "skin": "#f5d7b8", "hair": "short", "hair_col": "#6b4a32", "outfit": "#3f7f7a", "hat": "leaf_cap", "hat_col": "#7b5cb4"},
+	{"name": "Harbour", "skin": "#c68a5e", "hair": "curly", "hair_col": "#241a16", "outfit": "#34508a", "hat": "bucket", "hat_col": "#f2c84b"},
+	{"name": "Ember", "skin": "#eac0a0", "hair": "bob", "hair_col": "#c45a2c", "outfit": "#e8735a", "hat": "beret", "hat_col": "#8a3b5c"},
+	{"name": "Aurora", "skin": "#8d5a3b", "hair": "long", "hair_col": "#3a2a24", "outfit": "#9a7fd0", "hat": "flowers", "hat_col": "#ffb3c7"},
+	{"name": "Woodland", "skin": "#d9a27a", "hair": "bun", "hair_col": "#e2b45a", "outfit": "#4f7a3a", "hat": "beanie", "hat_col": "#d0503f"},
+	{"name": "Sunny", "skin": "#5e3a26", "hair": "pigtails", "hair_col": "#241a16", "outfit": "#e0a83a", "hat": "straw", "hat_col": "#ef6f5e"},
 ]
 
+## Choices offered in the Keeper creator.
+const SKIN_TONES := ["#f5d7b8", "#eac0a0", "#d9a27a", "#c68a5e", "#8d5a3b", "#5e3a26"]
+const HAIR_COLOURS := ["#241a16", "#3a2a24", "#6b4a32", "#a0663a", "#c45a2c", "#e2b45a", "#efe2c0", "#8a6ad0"]
+const OUTFIT_COLOURS := ["#3f7f7a", "#34508a", "#e8735a", "#9a7fd0", "#4f7a3a", "#e0a83a", "#d0503f", "#5a6470"]
+const HAT_COLOURS := ["#7b5cb4", "#f2c84b", "#8a3b5c", "#ffb3c7", "#d0503f", "#ef6f5e", "#3f9a8a", "#4f7fd6"]
 const HAIR_STYLES := ["short", "bob", "long", "bun", "curly", "pigtails"]
+const HAIR_NAMES := {"short": "Short", "bob": "Bob", "long": "Long", "bun": "Bun", "curly": "Curly", "pigtails": "Pigtails"}
+const HAT_NAMES := {"leaf_cap": "Leaf cap", "beret": "Beret", "bucket": "Bucket hat", "beanie": "Beanie", "straw": "Straw hat", "flowers": "Flower crown", "none": "No hat"}
 const HAT_STYLES := ["leaf_cap", "beret", "bucket", "beanie", "straw", "flowers", "none"]
 
 
-## [body, left leg, right leg]; the body includes arms, scarf, head, hair and hat.
+## [body, left leg, right leg]; the body includes arms, collar, head, hair and hat.
 static func keeper_parts(look: Dictionary = {}) -> Array:
 	var lk := KEEPER_DEFAULT.duplicate()
 	lk.merge(look, true)
@@ -310,7 +317,6 @@ static func keeper_parts(look: Dictionary = {}) -> Array:
 	var cloak := Color(str(lk["outfit"]))
 	var skin := Color(str(lk["skin"]))
 	var hair := Color(str(lk["hair_col"]))
-	var scarf := Color(str(lk["scarf"]))
 	var hc := Color(str(lk["hat_col"]))
 	var b := MeshKit.new()
 	b.capsule(Vector3(0, 0.66, 0), 0.25, 0.78, cloak, Vector3.ZERO)
@@ -318,8 +324,10 @@ static func keeper_parts(look: Dictionary = {}) -> Array:
 	for sx in [-1.0, 1.0]:
 		b.capsule(Vector3(sx * 0.29, 0.66, 0.02), 0.07, 0.42, cloak.darkened(0.08), Vector3(0, 0, sx * 12))
 		b.ball(Vector3(sx * 0.32, 0.45, 0.05), 0.07, skin, 10)
-	b.torus(Vector3(0, 1.0, 0), 0.13, 0.23, scarf, Vector3.ZERO, Vector3(1, 1.3, 1))
-	b.box(Vector3(0.1, 0.83, 0.2), Vector3(0.1, 0.3, 0.04), scarf, Vector3(0, 0, -8))
+	# a rounded collar and two buttons
+	b.cyl(Vector3(0, 1.0, 0), 0.17, 0.22, 0.07, cloak.lightened(0.22), 18)
+	for i in 2:
+		b.ball(Vector3(0, 0.86 - i * 0.14, 0.235 + i * 0.012), 0.025, Color("#fff1dc"), 6)
 	b.ball(Vector3(0, 1.27, 0), 0.24, skin, 20)
 	for sx in [-1.0, 1.0]:
 		b.sphere(Vector3(sx * 0.085, 1.29, 0.215), Vector3(0.033, 0.04, 0.02), EYE, 10)
@@ -348,7 +356,7 @@ static func keeper_parts(look: Dictionary = {}) -> Array:
 		"pigtails":
 			for sx in [-1.0, 1.0]:
 				b.ball(Vector3(sx * 0.27, 1.17, -0.06), 0.085, hair, 10)
-				b.ball(Vector3(sx * 0.25, 1.23, -0.05), 0.035, scarf, 6)
+				b.ball(Vector3(sx * 0.25, 1.23, -0.05), 0.035, hc, 6)
 	# hat
 	match str(lk["hat"]):
 		"leaf_cap":
